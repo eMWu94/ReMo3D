@@ -26,7 +26,7 @@ model_parameters = rm.SetModelParameters(formation_model_file, borehole_model_fi
 
 # Compute synthetic logs
 logs = rm.ComputeSyntheticLogs(tools_parameters, model_parameters, measurement_depths,
-   domain_radius=100, processes=4, preconditioner="multigrid", condense=True)
+   domain_radius=50, processes=6)
 
 # Save results
 output_folder = "./Output" # path to output folder
