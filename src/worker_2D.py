@@ -4,13 +4,16 @@ from ngsolve import *
 from ngsolve import ngsglobals
 from netgen.geom2d import SplineGeometry
 from netgen.meshing import MeshingParameters, meshsize
-import sys
+
+from mesh_converter import ReadGmsh
+
+import gmsh
 
 import numpy as np
 
 def SelectDataRange(borehole_geometry, formation_parameters, mud_resistivity, simulation_depth, domain_radius, active_geometry_window=0.99):
 
-    def domain_line_intersection (p1, p2, radius, side):
+    def domain_line_intersection (p1, p2, radius):
         x_1, y_1 = p1[1], p1[0]
         x_2, y_2 = p2[1], p2[0]
         d_x = x_2 - x_1
@@ -22,11 +25,9 @@ def SelectDataRange(borehole_geometry, formation_parameters, mud_resistivity, si
             x = (D*d_y+sign*np.sign(d_y)*d_x*np.sqrt(delta))/d_r**2
             y = (-D*d_x+sign*np.abs(d_y)*np.sqrt(delta))/d_r**2
             p = np.array([y, x])
-            if side=="top" and y<0 and np.dot(p1-p2, p1-p)> 0 and np.dot(p1-p2, p1-p)<np.dot(p1-p2, p1-p2):
+            if np.dot(p1-p2, p1-p)> 0 and np.dot(p1-p2, p1-p)<np.dot(p1-p2, p1-p2):
                 return np.array([y, x])
-            elif side=="bottom" and y>0 and np.dot(p1-p2, p1-p)> 0 and np.dot(p1-p2, p1-p)<np.dot(p1-p2, p1-p2):
-                return np.array([y, x])
-
+    
     ### Borehole geometry
     ## Select data relevant to construct model geometry within simulation domain
     if np.shape(borehole_geometry)[0]==2:
@@ -34,82 +35,77 @@ def SelectDataRange(borehole_geometry, formation_parameters, mud_resistivity, si
     else:
         point_within_domain_mask = (borehole_geometry[:,0]-simulation_depth)**2+borehole_geometry[:,1]**2 < domain_radius**2
         relevant_points_mask = np.convolve(point_within_domain_mask, np.array([True, True, True]), mode="same")
-        local_borehole_geometry = borehole_geometry[relevant_points_mask,:]
+        local_borehole_geometry = borehole_geometry[relevant_points_mask,:].copy()
     local_borehole_geometry[:,0] -= simulation_depth
 
     ## Adjust top point to the domain
     # do nothing if point is on domain boundary
-    if np.isclose(local_borehole_geometry[0, 0]**2 + local_borehole_geometry[0, 1], domain_radius**2):
+    if np.isclose(local_borehole_geometry[0, 0]**2 + local_borehole_geometry[0, 1]**2 , domain_radius**2):
         pass
     # else if point is within the domain add additional point on domain boundary
-    elif local_borehole_geometry[0, 0]**2 + local_borehole_geometry[0, 1] < domain_radius**2:
+    elif local_borehole_geometry[0, 0]**2 + local_borehole_geometry[0, 1]**2  < domain_radius**2:
         omega = np.arccos(local_borehole_geometry[0, 1]/domain_radius)
         local_borehole_geometry = np.vstack((np.array([-np.sin(omega)*domain_radius, local_borehole_geometry[0, 1]]), local_borehole_geometry))
     # else if point is outside the domain move it on the domain boundary
-    elif local_borehole_geometry[0, 0]**2 + local_borehole_geometry[0, 1] > domain_radius**2:
-        local_borehole_geometry[0,:] = domain_line_intersection(local_borehole_geometry[0, :], local_borehole_geometry[1, :], domain_radius, side="top")
+    elif local_borehole_geometry[0, 0]**2 + local_borehole_geometry[0, 1]**2  > domain_radius**2:
+        local_borehole_geometry[0,:] = domain_line_intersection(local_borehole_geometry[0, :], local_borehole_geometry[1, :], domain_radius)
     
     ## Adjust bottom point to the domain
     # do nothing if point is on domain boundary
-    if np.isclose(local_borehole_geometry[-1, 0]**2 + local_borehole_geometry[-1, 1], domain_radius**2):
+    if np.isclose(local_borehole_geometry[-1, 0]**2 + local_borehole_geometry[-1, 1]**2 , domain_radius**2):
         pass
     # else if point is within the domain add additional point on domain boundary
-    elif local_borehole_geometry[-1, 0]**2 + local_borehole_geometry[-1, 1] < domain_radius**2:
+    elif local_borehole_geometry[-1, 0]**2 + local_borehole_geometry[-1, 1]**2  < domain_radius**2:
         omega = np.arccos(local_borehole_geometry[-1, 1]/domain_radius)
-        local_borehole_geometry = np.vstack((local_borehole_geometry, np.array([np.sin(omega)*domain_radius, local_borehole_geometry[0, 1]])))
+        local_borehole_geometry = np.vstack((local_borehole_geometry, np.array([np.sin(omega)*domain_radius, local_borehole_geometry[-1, 1]])))
     # else if point is outside the domain move it on the domain boundary
-    elif local_borehole_geometry[-1, 0]**2 + local_borehole_geometry[-1, 1] > domain_radius**2:
-        local_borehole_geometry[-1,:] = domain_line_intersection(local_borehole_geometry[-1, :], local_borehole_geometry[-2, :], domain_radius, side="bottom")
+    elif local_borehole_geometry[-1, 0]**2 + local_borehole_geometry[-1, 1]**2  > domain_radius**2:
+        local_borehole_geometry[-1,:] = domain_line_intersection(local_borehole_geometry[-1, :], local_borehole_geometry[-2, :], domain_radius)
 
     ### Formation geometry
-
     ## Compute active geometry radius 
     # Active geometry prevents occurence of thin layers and small wedges at the very edge of simulation by ignoring occurence of small elements of model at the very edge of simulation domain
     active_geometry_radius = domain_radius * active_geometry_window 
 
     ## Select data relevant to construct model geometry within simulation domain
-    # Raw cut of relevant data\
-    point_within = np.any((formation_parameters[:,:2]-simulation_depth)**2 <= active_geometry_radius**2, axis=1)
-    line_across = np.all(np.vstack([np.all((formation_parameters[:,:2]-simulation_depth)**2 > active_geometry_radius**2, axis=1), formation_parameters[:,0]<simulation_depth, formation_parameters[:,1]>simulation_depth]), axis=0)
-    local_formation_model = formation_parameters[np.any(np.vstack([point_within, line_across]) , axis=0),:]
-    local_formation_model[:,:2] -= simulation_depth
+    # Select layers that are present within active geometry area
+    local_formation_parameters = formation_parameters.copy()
+    local_formation_parameters[:,:2] -= simulation_depth
 
-    # Check if undisturbed zones in layers with filtration are located within simulation domain
-    # Zones are located outside simulation domain if both characteristic points (top and bottom inside corners) 
-    # and the line between them are located outside the domain
-    filtration_zone_present_mask = ~np.isnan(local_formation_model[:,2])
-    top_points_outside_mask = local_formation_model[:,0]**2 + local_formation_model[:,2]**2 >= active_geometry_radius**2
-    bottom_points_outside_mask = local_formation_model[:,1]**2 + local_formation_model[:,2]**2 >= active_geometry_radius**2
-    line_outside_mask = ~np.all(np.vstack([local_formation_model[:,0] < 0, local_formation_model[:,1] > 0, local_formation_model[:,2] < active_geometry_radius]), axis=0)
-    zones_outside_mask = np.all(np.vstack([filtration_zone_present_mask, top_points_outside_mask, bottom_points_outside_mask, line_outside_mask]), axis=0)
+    relavant_layers = local_formation_parameters[np.any(np.abs(local_formation_parameters[:,:2])<active_geometry_radius, axis=1),:]
 
-    # Remove unrelevant zones from the model
-    local_formation_model[zones_outside_mask, 2] = np.nan
-    local_formation_model[zones_outside_mask, 4] = local_formation_model[zones_outside_mask, 3]
-    local_formation_model[zones_outside_mask, 3] = np.nan
+    # Remove undisturbed zones that are not present within active geometry area
+    layers_to_check = ~np.isnan(relavant_layers[:,2])
 
-    ## Adjust top point to the domain
-    if local_formation_model[0, 0] != local_borehole_geometry[0, 0]:
-        local_formation_model[0, 0] = local_borehole_geometry[0, 0]
+    x_points = np.repeat(np.atleast_2d(relavant_layers[layers_to_check, 2]).T, 2, axis=1)
+
+    y_points = relavant_layers[layers_to_check,:2]
+
+    d = (x_points**2 + y_points**2)**(1/2)
+    zones_within = np.any(d<active_geometry_radius, axis=1)
+
+    zones_to_remove = layers_to_check.copy()
+    zones_to_remove[layers_to_check] = ~zones_within
+
+    local_formation_model = relavant_layers.copy()
+    local_formation_model[zones_to_remove, 4] = local_formation_model[zones_to_remove,3]
+    local_formation_model[zones_to_remove, 2:4] = np.nan
+
+    ## Adjust bottom and top boundary to the domain
+    abs_c = domain_radius*1.01 # value that will stretch bottom and top layers slightly outside simulation domain
+
+    # Adjust top point to the domain
+    if local_formation_model[0, 0] > -abs_c:
+        local_formation_model[0, 0] = -abs_c
     
-    ## Adjust bottom point to the domain
-    if local_formation_model[-1, 1] != local_borehole_geometry[-1, 0]:
-        local_formation_model[-1, 1] = local_borehole_geometry[-1, 0]
+    # Adjust bottom point to the domain
+    if local_formation_model[-1, 1] < abs_c:
+        local_formation_model[-1, 1] = abs_c
 
-    ## Local formation grid: [region next to borehole wall, region at left side to filtration zone boundary (if present within simulation domain), region at right side of filtration zone boundary (if present within simulation domain), region next to simulation domain end]
-    local_formation_grid = np.empty((np.shape(local_formation_model)[0], 2))
-    region_index = 2
-    for i in range(np.shape(local_formation_grid)[0]):
-        if np.isnan(local_formation_model[i,3]) == True:
-            local_formation_grid[i,:] = region_index
-            region_index += 1
-        else:
-            local_formation_grid[i,0] = region_index
-            local_formation_grid[i,1] = region_index + 1
-            region_index += 2
+    ## Set formation geometry
+    local_formation_geometry = local_formation_model[:,:3]
 
-    local_formation_geometry = np.hstack((local_formation_model[:,:3], local_formation_grid))
-
+    ## Set formation conductivity distribution
     formation_resistivity_distribution = np.ndarray.flatten(local_formation_model[:,3:5])
     formation_resistivity_distribution = formation_resistivity_distribution[~np.isnan(formation_resistivity_distribution)]
 
@@ -117,203 +113,166 @@ def SelectDataRange(borehole_geometry, formation_parameters, mud_resistivity, si
 
     return (local_formation_geometry, local_borehole_geometry, local_conductivity_distribution)
 
-def MakeGeometry(domain_radius, tool_geometry, formation_geometry, borehole_geometry, source_terms, mesh_size_min):
+def ConstructModel(domain_radius, tool_geometry, source_terms, formation_geometry, borehole_geometry, rank):
 
-    index_0D = 0 # points
-    index_1D = 0 # lines
+    ### GMSH test
+    gmsh.initialize()
+    gmsh.option.setNumber("General.Terminal", 0)
+    gmsh.model.add("model_"+str(rank))
 
-    ### Calculate z coordinates of layer boundaries
-    boundaries_z =  np.sort(np.unique(formation_geometry[:,:2]))
+    ## Add central point (removed from final geometry)
+    gmsh.model.occ.addPoint(0, 0, 0, tag=1)
 
-    ### Add points [index, r, z]
+    ## Points at borehole axis (bottom -> top)
+    gmsh.model.occ.addPoint(0, domain_radius, 0, tag=2)
+    for i in range(3,6):
+        gmsh.model.occ.addPoint(0, np.flip(tool_geometry)[i-3], 0, tag=i)
+    gmsh.model.occ.addPoint(0, -domain_radius, 0, tag=6)
+    points_at_borehole_axis = [2,3,4,5,6]
+    index_0D = 7
 
-    ## Add points at borehole axis
-    points_at_borehole_axis = np.vstack([np.arange(5) + index_0D, np.zeros(5), np.hstack([-domain_radius, tool_geometry, domain_radius])]).T
-    points = points_at_borehole_axis
-    index_0D += 5
+    ## Points at borehole boundary (top -> bottom)
+    points_at_borehole_boundary = []
+    for i in range(0, np.shape(borehole_geometry)[0]):
+        gmsh.model.occ.addPoint(borehole_geometry[i,1], borehole_geometry[i,0], 0, tag=index_0D)
+        points_at_borehole_boundary.append(index_0D)
+        index_0D += 1
 
-    ## Add points at borehole/rock interface
-    # Calculate intersections of boundaries with the borehole wall
-    boundaries_z_nr = np.atleast_2d(boundaries_z[~np.isin(boundaries_z, borehole_geometry[:,0])]).T # select layer boundaries from depths other than caliper points
-    nr_intersections = np.concatenate([np.atleast_2d(np.interp(boundaries_z_nr[:,0], borehole_geometry[:,0], borehole_geometry[:,1])).T, boundaries_z_nr], axis=1) # intersections of boundaries from depths other than caliper points with the borehole wall
+    # Add 2D borehole template
+    index_1D = 1
 
-    # Merge intersections with caliper data
-    cali_vertices = np.concatenate([np.flip(borehole_geometry, 1), nr_intersections], axis=0) # add intesetions to borehole geometry data
-    cali_vertices = cali_vertices[np.lexsort([cali_vertices[:,1]])] # sort data in ascending z-value order
-    boundary_points_at_borehole_wall_mask = np.isin(cali_vertices[:,1], boundaries_z) # mark intersections points of layer boundaries with borehole wall for later use
+    ## Add lines on borehole axis
+    lines_at_borehole_axis = []
+    for i in range(len(points_at_borehole_axis)-1):
+        gmsh.model.occ.addLine(points_at_borehole_axis[i], points_at_borehole_axis[i+1], tag=index_1D)
+        lines_at_borehole_axis.append(index_1D)
+        index_1D += 1
 
-    # Add points at borehole/rock interface
-    points_at_borehole_wall = np.hstack([np.atleast_2d(np.arange(np.shape(cali_vertices)[0])).T + index_0D, cali_vertices])
-    points = np.vstack([points, points_at_borehole_wall])
-    index_0D += np.shape(points_at_borehole_wall)[0]
+    ## Add lines at borehole boundary
+    lines_at_borehole_boundary = []
+    for i in range(len(points_at_borehole_boundary)-1):
+        gmsh.model.occ.addLine(points_at_borehole_boundary[i], points_at_borehole_boundary[i+1], tag=index_1D)
+        lines_at_borehole_boundary.append(index_1D)
+        index_1D += 1
 
-    ## Add points at filtration/undisturbed zone interfaces
-    points_at_filtration_boundaries = np.vstack((np.repeat(formation_geometry[:,2], 2), np.ndarray.flatten(formation_geometry[:,:2]))).T
-    filtration_mask = np.unique(points_at_filtration_boundaries, axis=0, return_index=True)[1]
+    ## Add arc at top of the domain (axis -> boundary)
+    gmsh.model.occ.addCircleArc(points_at_borehole_axis[-1], 1, points_at_borehole_boundary[0], tag=index_1D)
+    top_arc = [index_1D]
+    index_1D += 1
 
-    map_points_at_filtration_to_boundaries = np.ndarray.flatten(np.vstack((np.arange(np.shape(formation_geometry)[0]), np.arange(np.shape(formation_geometry)[0])+1)).T)[np.sort(filtration_mask)] # prepared for lines
+    ## Add arc at bottom of the domain (boundary -> axis)
+    gmsh.model.occ.addCircleArc(points_at_borehole_boundary[-1], 1, points_at_borehole_axis[0], tag=index_1D)
+    bottom_arc = [index_1D]
+    index_1D += 1
 
-    points_at_filtration_boundaries = points_at_filtration_boundaries[np.sort(filtration_mask)]
+    ## Add external domain boundary
+    circle_arc = gmsh.model.occ.addCircleArc(points_at_borehole_boundary[0], 1, points_at_borehole_boundary[-1], tag=index_1D)
+    domain_arc = [index_1D]
+    index_1D += 1
 
-    map_points_at_filtration_to_boundaries = map_points_at_filtration_to_boundaries[~np.isnan(points_at_filtration_boundaries).any(axis=1)] # prepared for lines
-    points_at_filtration_boundaries = points_at_filtration_boundaries[~np.isnan(points_at_filtration_boundaries).any(axis=1)]
-    points_at_filtration_boundaries = np.hstack([np.atleast_2d(np.arange(np.shape(points_at_filtration_boundaries)[0])).T + index_0D, points_at_filtration_boundaries])
+    ## Add domain
+    domain_loop = gmsh.model.occ.addCurveLoop(lines_at_borehole_boundary + domain_arc, tag=3)
+    domain = gmsh.model.occ.addPlaneSurface([3], tag=3)
 
-    points_at_top_boundaries = formation_geometry[:,[2,0]][~np.isnan(formation_geometry[:,[2,0]]).any(axis=1)] # prepared for lines
-    points_at_bottom_boundaries = formation_geometry[:,[2,1]][~np.isnan(formation_geometry[:,[2,1]]).any(axis=1)] # prepared for lines
-    indices_of_points_at_top_boundaries = np.argwhere((points_at_top_boundaries[:, None] == points_at_filtration_boundaries[:,1:]).all(-1)==True)[:,1] + index_0D # prepared for lines
-    indices_of_points_at_bottom_boundaries = np.argwhere((points_at_bottom_boundaries[:, None] == points_at_filtration_boundaries[:,1:]).all(-1)==True)[:,1] + index_0D # prepared for lines
+    ## Add borehole
+    borehole_loop = gmsh.model.occ.addCurveLoop(lines_at_borehole_axis + top_arc + lines_at_borehole_boundary + bottom_arc, tag=4)
+    borehole = gmsh.model.occ.addPlaneSurface([4], tag=4)
 
-    # Move points from outside to the domain boundary
-    points_outside_domain_mask = points_at_filtration_boundaries[:,1]**2 + points_at_filtration_boundaries[:,2]**2 >= domain_radius**2
-    omega = np.arccos(points_at_filtration_boundaries[points_outside_domain_mask, 1]/domain_radius)
-    points_at_filtration_boundaries[points_outside_domain_mask, 2] = np.sign(points_at_filtration_boundaries[points_outside_domain_mask, 2])*np.sin(omega)*domain_radius
-
-    # Add points at filtration/undisturbed zone interfaces
-    points = np.vstack([points, points_at_filtration_boundaries])
-    index_0D += np.shape(points_at_filtration_boundaries)[0]
-
-    ## Add points at ends of layers boundaries
-    omega = np.arcsin(boundaries_z[1:-1]/domain_radius)
-    points_at_end = np.vstack([np.cos(omega)*domain_radius, boundaries_z[1:-1]]).T
-    unique_points_at_end_mask = ~(points_at_end[:, None] == points_at_filtration_boundaries[:,1:]).all(-1).any(-1) # check if same points are already present in
-    points_at_end = np.hstack([np.atleast_2d(np.arange(np.shape(points_at_end)[0])).T + index_0D, points_at_end[unique_points_at_end_mask,:]])
-
-    points = np.vstack([points, points_at_end])
-    index_0D += np.shape(points_at_end)[0]
-
-    ## Add additional points at domain boundary to aproximate circular shape
-    # Select existing points lying at the domain_boundary and convert them to polar coordinates
-    existing_points_at_domain_boundary = points[np.isclose(points[:, 1]**2 + points[:, 2]**2, domain_radius**2),:]
-    existing_points_at_domain_boundary = existing_points_at_domain_boundary[np.argsort(existing_points_at_domain_boundary[:,2]),:]
-
-    existing_points_at_domain_boundary[0,2] = np.arctan(-np.inf)
-    existing_points_at_domain_boundary[-1,2] = np.arctan(np.inf)
-    existing_points_at_domain_boundary[1:-1,2] = np.arctan(existing_points_at_domain_boundary[1:-1,2]/existing_points_at_domain_boundary[1:-1,1])
-    existing_points_at_domain_boundary[:,1] = domain_radius
-
-    # Add points to follow circular shape of simulation domain
-    angles_betweeen_existing_points = existing_points_at_domain_boundary[1:,2]-existing_points_at_domain_boundary[:-1,2]
-    points_to_add = np.floor(angles_betweeen_existing_points/(9*np.pi/180)).astype(int) # number of points that will be added between existing points
-
-    starting_index = index_0D
-    points_at_domain_boundary = existing_points_at_domain_boundary[0,:]
-    for i in range(np.shape(points_to_add)[0]):
-        if points_to_add[i] > 0:
-            index = np.array([0, points_to_add[i]+1])
-            angle = np.array([existing_points_at_domain_boundary[i,2], existing_points_at_domain_boundary[i+1,2]])
-            interpolated_angles = np.interp(np.arange(points_to_add[i])+1, index, angle)
-            additional_points = np.vstack([np.arange(points_to_add[i]) + index_0D, np.full(points_to_add[i], domain_radius), interpolated_angles]).T
-            points_at_domain_boundary = np.vstack([points_at_domain_boundary, additional_points, existing_points_at_domain_boundary[i+1,:]])
-            index_0D += points_to_add[i]
+    ## Split formation into layers
+    boundaries_z = np.sort(np.unique(formation_geometry[:,:2]))
+    pg_index_list = [4]
+    index_2D = 5
+    if np.shape(boundaries_z)[0]==2:
+        if np.isnan(formation_geometry[0, 2]):
+            pg_index_list.append(6)
         else:
-            points_at_domain_boundary = np.vstack([points_at_domain_boundary, existing_points_at_domain_boundary[i+1,:]])
-    
-    points_at_domain_boundary[:,1], points_at_domain_boundary[:,2] = domain_radius*np.cos(points_at_domain_boundary[:,2]), domain_radius*np.sin(points_at_domain_boundary[:,2])
-    new_points_at_domain_boundary = points_at_domain_boundary[points_at_domain_boundary[:,0]>=starting_index,:]
-    points = np.vstack([points, new_points_at_domain_boundary])
-
-    ### Add lines [index, start-point, end-point, boundary-condition, domain on the left side, domain on the right side]
-    ## Add vertical lines
-    # Add lines at borehole axis
-    number_of_lines = np.shape(points_at_borehole_axis)[0]-1
-    lines_at_borehole_axis = np.vstack([np.arange(number_of_lines), np.arange(number_of_lines), np.arange(number_of_lines)+1, np.ones(number_of_lines), np.zeros(number_of_lines), np.ones(number_of_lines)]).T
-    lines = lines_at_borehole_axis
-    index_1D += number_of_lines
-
-    # Add lines at borehole/rock interface
-    boundary_indices = np.argwhere(boundary_points_at_borehole_wall_mask).flatten()
-    layers_extends = boundary_indices[1:] - boundary_indices[:-1]
-    number_of_lines = np.shape(points_at_borehole_wall)[0]-1
-    lines_at_borehole_wall = np.vstack([np.arange(number_of_lines) + index_1D, points_at_borehole_wall[:-1,0], points_at_borehole_wall[1:,0], np.ones(number_of_lines), np.ones(number_of_lines), np.repeat(formation_geometry[:,3], layers_extends)]).T
-    lines = np.vstack([lines, lines_at_borehole_wall])
-    index_1D += number_of_lines
-
-    # Add lines at filtration/undisturbed zones interface
-    number_of_lines = np.shape(points_at_top_boundaries)[0]
-    lines_at_filtration_boundaries = np.vstack([np.arange(number_of_lines) + index_1D, indices_of_points_at_top_boundaries, indices_of_points_at_bottom_boundaries, np.ones(number_of_lines), formation_geometry[formation_geometry[:,3]!=formation_geometry[:,4],3:].T]).T
-    lines = np.vstack([lines, lines_at_filtration_boundaries])
-    index_1D += number_of_lines
-
-    ## Add horizontal lines
-    # Add lines at layers boundaries
-    number_of_lines_at_boundary = np.empty_like(boundaries_z)
-    for i in range(np.shape(number_of_lines_at_boundary)[0]):
-        number_of_lines_at_boundary[i] = np.sum(np.all([points[:,2]==boundaries_z[i], points[:,1] > 0], axis=0)) - 1
-    number_of_lines = int(np.sum(number_of_lines_at_boundary))
-
-    areas_above_boundary = np.vstack((formation_geometry[:-1,3], np.full_like(formation_geometry[:-1,3], np.nan).T, formation_geometry[:-1,4])).T
-    areas_below_boundary = np.vstack((formation_geometry[1:,3], np.full_like(formation_geometry[1:,3], np.nan).T, formation_geometry[1:,4])).T
-
-    for i in range(np.shape(formation_geometry)[0]-1):
-        if formation_geometry[i, 2] > formation_geometry[i+1, 2]:
-            areas_above_boundary[i,1] = areas_above_boundary[i,0]
-            areas_below_boundary[i,1] = areas_below_boundary[i,2]
-        elif formation_geometry[i, 2] < formation_geometry[i+1, 2]:
-            areas_above_boundary[i,1] = areas_above_boundary[i,2]
-            areas_below_boundary[i,1] = areas_below_boundary[i,0]
-
-    lines_at_boundaries = np.full((number_of_lines, 6), 1)
-    lines_at_boundaries[:,0] = np.arange(number_of_lines) + index_1D
-
-    j = 0
-    for i in range(np.shape(boundaries_z[1:-1])[0]):
-        points_at_ith_boundary = points[np.all([points[:,2]==boundaries_z[1:-1][i], points[:,1] > 0], axis=0), :]
-        points_at_ith_boundary = points_at_ith_boundary[np.argsort(points_at_ith_boundary[:,1]),:]
-        if np.shape(points_at_ith_boundary)[0] == 2:
-            lines_at_boundaries[j,[1,2,4,5]] = [points_at_ith_boundary[0,0], points_at_ith_boundary[1,0], areas_below_boundary[i,2], areas_above_boundary[i,0]]
-            j += 1
-        elif np.shape(points_at_ith_boundary)[0] == 3:
-            lines_at_boundaries[j:j+2,[1,2,4,5]] = np.vstack((points_at_ith_boundary[:2,0], points_at_ith_boundary[1:3,0], areas_below_boundary[i,[0,2]], areas_above_boundary[i,[0,2]])).T
-            j += 2
-        elif np.shape(points_at_ith_boundary)[0] == 4:
-            lines_at_boundaries[j:j+3,[1,2,4,5]] = np.vstack((points_at_ith_boundary[:3,0], points_at_ith_boundary[1:4,0], areas_below_boundary[i,:], areas_above_boundary[i,:])).T
-            j += 3
-
-    lines = np.vstack([lines, lines_at_boundaries])
-    index_1D += number_of_lines
-
-    ## Add lines at domain boundary
-    number_of_lines = np.shape(points_at_domain_boundary)[0]-1
-
-    areas_next_to_domain_boundary = [1]
-    for i in range(np.shape(formation_geometry)[0]):
-        if formation_geometry[i,3] == formation_geometry[i,4]:
-            areas_next_to_domain_boundary.append(formation_geometry[i,3])
-        else:
-            top_point_mask = formation_geometry[i,0]**2 + formation_geometry[i,2]**2 >= domain_radius**2
-            bottom_point_mask = formation_geometry[i,1]**2 + formation_geometry[i,2]**2 >= domain_radius**2
-            if top_point_mask==True and bottom_point_mask==True:
-                areas_next_to_domain_boundary += [formation_geometry[i,3], formation_geometry[i,4], formation_geometry[i,3]]
-            elif top_point_mask==True:
-                areas_next_to_domain_boundary += [formation_geometry[i,3], formation_geometry[i,4]]
-            elif bottom_point_mask==True:
-                areas_next_to_domain_boundary += [formation_geometry[i,4], formation_geometry[i,3]]
+            filtration_template = gmsh.model.occ.addRectangle(0, boundaries_z[i-1], 0, formation_geometry[0, 2], boundaries_z[i]-boundaries_z[i-1], tag=1)
+            filtration = gmsh.model.occ.intersect([(2, 1)], [(2,3)], removeTool = False, tag=index_2D)
+            undisturbed_template = gmsh.model.occ.addRectangle(formation_geometry[0, 2], boundaries_z[i-1], 0, (domain_radius-formation_geometry[0, 2])*1.01, boundaries_z[i]-boundaries_z[i-1], tag=2)
+            undisturbed = gmsh.model.occ.intersect([(2, 2)], [(2,3)], removeTool = False, tag=index_2D+1)
+            pg_index_list.append(index_2D)
+            pg_index_list.append(index_2D+1)
+            index_2D += 2
+    else:
+        for i in range(1, np.shape(boundaries_z)[0]):
+            if np.isnan(formation_geometry[i-1, 2]):
+                layer_template = gmsh.model.occ.addRectangle(0, boundaries_z[i-1], 0, domain_radius*1.01, boundaries_z[i]-boundaries_z[i-1], tag=1)
+                layer = gmsh.model.occ.intersect([(2, 1)], [(2,3)], removeTool = False, tag=index_2D)
+                pg_index_list.append(index_2D)
+                index_2D += 1
             else:
-                areas_next_to_domain_boundary.append(formation_geometry[i,4])
-    areas_next_to_domain_boundary.append(1)
+                filtration_template = gmsh.model.occ.addRectangle(0, boundaries_z[i-1], 0, formation_geometry[i-1, 2], boundaries_z[i]-boundaries_z[i-1], tag=1)
+                filtration = gmsh.model.occ.intersect([(2, 1)], [(2,3)], removeTool = False, tag=index_2D)
+                undisturbed_template = gmsh.model.occ.addRectangle(formation_geometry[i-1, 2], boundaries_z[i-1], 0, (domain_radius-formation_geometry[i-1, 2])*1.01, boundaries_z[i]-boundaries_z[i-1], tag=2)
+                undisturbed = gmsh.model.occ.intersect([(2, 2)], [(2,3)], removeTool = False, tag=index_2D+1)
+                pg_index_list.append(index_2D)
+                pg_index_list.append(index_2D+1)
+                index_2D += 2
+        
+        gmsh.model.occ.remove([(2,3)], recursive=True)
 
-    areas_next_to_domain_boundary = np.repeat(areas_next_to_domain_boundary, points_to_add+1)
-    lines_at_domain_boundary = np.vstack((np.arange(number_of_lines) + index_1D, points_at_domain_boundary[:-1,0], points_at_domain_boundary[1:,0], np.ones(np.shape(points_at_domain_boundary[1:,0]))+1, np.array(areas_next_to_domain_boundary), np.zeros(np.shape(points_at_domain_boundary[1:,0])))).T
-    lines = np.vstack([lines, lines_at_domain_boundary])
+    gmsh.model.occ.removeAllDuplicates()        
+    gmsh.model.occ.synchronize()
 
-    ### Convert arrays to lists
-    points = list(map(list, points[:,1:]))
-    lines = list(map(list, lines[:,1:].astype(int)))
+    gmsh.model.mesh.field.add("MathEval", 1) # Horizontal, linear meshsize field
+    gmsh.model.mesh.field.setString(1, "F", "x + 0.1")
 
-    ### Add mesh size information
-    for k in np.ndarray.flatten(np.argwhere(source_terms != 0))+1: # Set minimum mesh size around source points
-        points[k].append(mesh_size_min)
+    i = 2
+    for electrode_position in tool_geometry[source_terms != 0]:
+        gmsh.model.mesh.field.add("MathEval", i) # Distance from the electrode 
+        gmsh.model.mesh.field.setString(i, "F","(x^2 + (y+({}))^2)^0.5".format(electrode_position))
 
-    ### Create the model geometry
-    model_geometry = SplineGeometry()
+        gmsh.model.mesh.field.add("MathEval", i+1) # Meshsize field modification near current electrodes
+        gmsh.model.mesh.field.setString(i+1, "F", "((F{}^2)/2) + 0.01".format(i))
+        i += 2
 
-    pnums = [model_geometry.AppendPoint(*p) for p in points]
+    if np.shape(tool_geometry[source_terms != 0])[0]==1:
+        gmsh.model.mesh.field.add("Min", 4)
+        gmsh.model.mesh.field.setNumbers(4, "FieldsList", [1,3])
+        gmsh.model.mesh.field.setAsBackgroundMesh(4)
+    else:
+        gmsh.model.mesh.field.add("Min", 6)
+        gmsh.model.mesh.field.setNumbers(6, "FieldsList", [1,3,5])
+        gmsh.model.mesh.field.setAsBackgroundMesh(6)
+    
+    gmsh.option.setNumber("Mesh.Algorithm", 5)
+    gmsh.model.mesh.generate(2)
 
-    for p1,p2,bc,left,right in lines:
-        model_geometry.Append( ["line", pnums[p1], pnums[p2]], bc=bc, leftdomain=left, rightdomain=right)
+    dimention, lines = list(zip(*gmsh.model.occ.getEntities(1)))
 
-    return (model_geometry)
+    dirichlet_boundaries = []
+    neumann_boundaries = []
+    for i in range(len(lines)):
+        nodes = gmsh.model.mesh.getNodes(dim=1, tag=lines[i], includeBoundary = True)
+        coordinates = nodes[1].reshape((int(np.shape(nodes[1])[0]/3),3))
+        R = np.sqrt(coordinates[:,0]**2 + coordinates[:,1]**2)
+        if np.allclose(R, domain_radius):
+            dirichlet_boundaries.append(lines[i])
+        else:
+            neumann_boundaries.append(lines[i])
+
+    i = 1
+    for index in pg_index_list:
+        surface = gmsh.model.addPhysicalGroup(2, [index], index)
+        gmsh.model.setPhysicalName(2, surface, "surf_"+str(i))
+        i += 1
+
+    db = gmsh.model.addPhysicalGroup(1, dirichlet_boundaries, 1)
+    gmsh.model.setPhysicalName(1, db , "dirichlet_boundary")
+
+    nb = gmsh.model.addPhysicalGroup(1, neumann_boundaries, 2)
+    gmsh.model.setPhysicalName(2, nb , "neumann_boundary")
+
+    # Save file
+    gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
+    gmsh.write("./tmp/fm_"+str(rank)+".msh")
+    gmsh.finalize()
+
+    # Read file
+    mesh = ReadGmsh("./tmp/fm_"+str(rank)+".msh", 2)
+    mesh = Mesh(mesh)
+    
+    return mesh, dirichlet_boundaries
 
 def AddPointSource(f, x, y, fac):
     spc = f.space
@@ -327,7 +286,7 @@ def AddPointSource(f, x, y, fac):
 
 def SolveBVP(mesh, sigma, tool_geometry, source_terms, preconditioner, condense):
     
-    fes = H1(mesh, order=3, dirichlet=[2], autoupdate=True)
+    fes = H1(mesh, order=3, dirichlet='dirichlet_boundary', autoupdate=True)
     u = fes.TrialFunction()
     v = fes.TestFunction()
 
@@ -381,9 +340,6 @@ mud_resistivities = np.empty(arrays_shape[2], dtype='float')
 tools_parameters = dict()
 simulation_depths = dict()
 domain_radius = float()
-mesh_size_min = float()
-mesh_size_max = float()
-mesh_density  = str()
 preconditioner = str()
 condense = bool()
 
@@ -394,10 +350,7 @@ comm.Bcast([mud_resistivities, MPI.FLOAT], root=0)
 
 tools_parameters = comm.bcast(tools_parameters, root=0)
 simulation_depths = comm.bcast(simulation_depths, root=0)
-mesh_density = comm.bcast(mesh_density, root=0)
 domain_radius =  comm.bcast(domain_radius, root=0)
-mesh_size_min = comm.bcast(mesh_size_min, root=0)
-mesh_size_max = comm.bcast(mesh_size_max, root=0)
 preconditioner = comm.bcast(preconditioner, root=0)
 condense = comm.bcast(condense, root=0)
 
@@ -415,10 +368,8 @@ for task in iter(lambda: comm.sendrecv(None, dest=0), StopIteration):
         geometric_factor = tools_parameters[tool][0,3]
         # Carve out suitable range of data
         local_formation_geometry, local_borehole_geometry, sigma = SelectDataRange(borehole_geometry, formation_parameters, mud_resistivities[depth], simulation_depths[tool][depth], domain_radius)
-        # Create geometry
-        model_geometry = MakeGeometry(domain_radius, tool_geometry, local_formation_geometry, local_borehole_geometry, source_terms, mesh_size_min)
-        # Create mesh
-        mesh = Mesh(model_geometry.GenerateMesh(eval("meshsize." + mesh_density), maxh=mesh_size_max))
+        # Create geometry and mesh
+        mesh, dirichlet_boundaries = ConstructModel(domain_radius, tool_geometry, source_terms, local_formation_geometry, local_borehole_geometry, rank)
         # Solve BVP
         fes, gfu = SolveBVP(mesh, sigma, tool_geometry, source_terms, preconditioner, condense)
         # Compute measured resistivity
