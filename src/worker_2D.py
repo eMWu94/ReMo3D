@@ -5,7 +5,7 @@ from ngsolve import ngsglobals
 from netgen.geom2d import SplineGeometry
 from netgen.meshing import MeshingParameters, meshsize
 
-from mesh_converter import ReadGmsh
+from netgen.read_gmsh import ReadGmsh
 
 import gmsh
 
@@ -269,7 +269,7 @@ def ConstructModel(domain_radius, tool_geometry, source_terms, formation_geometr
     gmsh.finalize()
 
     # Read file
-    mesh = ReadGmsh("./tmp/fm_"+str(rank)+".msh", 2)
+    mesh = ReadGmsh("./tmp/fm_"+str(rank)+".msh")
     mesh = Mesh(mesh)
     
     return mesh, dirichlet_boundaries
