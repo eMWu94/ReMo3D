@@ -3,12 +3,12 @@ from mpi4py import MPI
 from ngsolve import *
 from ngsolve import ngsglobals
 
-from netgen.read_gmsh import ReadGmsh
+from mesh_converter import ReadGmsh
+
 import gmsh
 
-import sys
 import numpy as np
-import random
+import scipy.interpolate as spi
 
 def SelectDataRange(borehole_geometry, formation_parameters, dip, mud_resistivity, simulation_depth, domain_radius, active_geometry_window=0.99):
 
@@ -21,6 +21,20 @@ def SelectDataRange(borehole_geometry, formation_parameters, dip, mud_resistivit
         relevant_points_mask = np.convolve(point_within_domain_mask, np.array([True, True, True]), mode="same")
         local_borehole_geometry = borehole_geometry[relevant_points_mask,:]
     local_borehole_geometry[:,0] -= simulation_depth
+
+    ## Add additional points if borehole geometry is too sparse
+    interpolated_depths = local_borehole_geometry[0,0]
+    for i in range(1, np.shape(local_borehole_geometry)[0]):
+        distance = local_borehole_geometry[i,0] - local_borehole_geometry[i-1,0]
+        if distance > 0.15:
+            additional_points = np.linspace(local_borehole_geometry[i-1,0], local_borehole_geometry[i,0], np.max([3, int(distance*10+1)]))
+            interpolated_depths = np.hstack([interpolated_depths, additional_points[1:]])
+        else:
+            interpolated_depths = np.hstack([interpolated_depths, local_borehole_geometry[i,0]])
+
+    if np.shape(interpolated_depths)[0] > np.shape(local_borehole_geometry)[0]:
+        interpolation = spi.interp1d(local_borehole_geometry[:,0], local_borehole_geometry[:,1], kind='linear')
+        local_borehole_geometry = np.vstack([interpolated_depths, interpolation(interpolated_depths)]).T
 
     ## Adjust top point to the domain
     # do nothing if point is on domain boundary
@@ -191,10 +205,30 @@ def ConstructModel(domain_radius, tool_geometry, source_terms, formation_geometr
     gmsh.model.occ.removeAllDuplicates()
     gmsh.model.occ.synchronize()
 
-    gmsh.model.mesh.field.add("MathEval", 1)
-    gmsh.model.mesh.field.setString(1, "F", "(x^2 + y^2)^0.5 + 0.01")
+    gmsh.model.mesh.field.add("MathEval", 1) # Horizontal, linear meshsize field
+    gmsh.model.mesh.field.setString(1, "F", "(x^2 + y^2)^0.5 + 0.1")
 
-    gmsh.model.mesh.field.setAsBackgroundMesh(1)
+    i = 2
+    for electrode_position in tool_geometry[source_terms != 0]:
+        gmsh.model.mesh.field.add("MathEval", i) # Distance from the electrode
+        gmsh.model.mesh.field.setString(i, "F","(x^2 + y^2 + (z+({}))^2)^0.5".format(electrode_position))
+
+        gmsh.model.mesh.field.add("MathEval", i+1) # Meshsize field modification
+        gmsh.model.mesh.field.setString(i+1, "F", "((F{}^2)/2) + 0.01".format(i))
+
+        i += 2
+
+    if np.shape(tool_geometry[source_terms != 0])[0]==1:
+        gmsh.model.mesh.field.add("Min", 4)
+        gmsh.model.mesh.field.setNumbers(4, "FieldsList", [1, 3])
+        gmsh.model.mesh.field.setAsBackgroundMesh(4)
+    else:
+        gmsh.model.mesh.field.add("Min", 6)
+        gmsh.model.mesh.field.setNumbers(6, "FieldsList", [1, 3, 5])
+
+        gmsh.model.mesh.field.setAsBackgroundMesh(6)
+
+    gmsh.option.setNumber("Mesh.Algorithm", 5)
     gmsh.model.mesh.generate(3)
 
     dimention, surfaces = list(zip(*gmsh.model.occ.getEntities(2)))
@@ -225,8 +259,7 @@ def ConstructModel(domain_radius, tool_geometry, source_terms, formation_geometr
     gmsh.write("./tmp/fm_"+str(rank)+".msh")
     gmsh.finalize()
 
-    ############################# Read
-    mesh = ReadGmsh("./tmp/fm_"+str(rank)+".msh")
+    mesh = ReadGmsh("./tmp/fm_"+str(rank)+".msh", 3)
     mesh = Mesh(mesh)
     
     return mesh, dirichlet_boundaries
@@ -297,9 +330,6 @@ mud_resistivities = np.empty(arrays_shape[2], dtype='float')
 tools_parameters = dict()
 simulation_depths = dict()
 domain_radius = float()
-mesh_size_min = float()
-mesh_size_max = float()
-mesh_density  = str()
 preconditioner = str()
 condense = bool()
 dip = float()
@@ -311,10 +341,7 @@ comm.Bcast([mud_resistivities, MPI.FLOAT], root=0)
 
 tools_parameters = comm.bcast(tools_parameters, root=0)
 simulation_depths = comm.bcast(simulation_depths, root=0)
-mesh_density = comm.bcast(mesh_density, root=0)
 domain_radius =  comm.bcast(domain_radius, root=0)
-mesh_size_min = comm.bcast(mesh_size_min, root=0)
-mesh_size_max = comm.bcast(mesh_size_max, root=0)
 preconditioner = comm.bcast(preconditioner, root=0)
 condense = comm.bcast(condense, root=0)
 dip = comm.bcast(dip, root=0)
@@ -339,12 +366,12 @@ for task in iter(lambda: comm.sendrecv(None, dest=0), StopIteration):
         fes, gfu = SolveBVP(mesh, sigma, tool_geometry, source_terms, dirichlet_boundaries, preconditioner, condense=True)
         measuring_electodes = tool_geometry[source_terms==0]
         if np.shape(measuring_electodes)[0] == 2:
-            result = abs(geometric_factor * (gfu(mesh(0.0, 0.0, measuring_electodes[1]))-gfu(mesh(0.0, 0.0, measuring_electodes[0]))))/2 # /2 - because only halfsphere is present within the model
+            result = abs(geometric_factor * (gfu(mesh(0.0, 0.0, measuring_electodes[1]))-gfu(mesh(0.0, 0.0, measuring_electodes[0]))))/2 # division by two because only halfsphere is present within the model
         elif np.shape(measuring_electodes)[0] == 1:
             result = abs(geometric_factor * gfu(mesh(0.0, 0.0, measuring_electodes[0])))/2 # division by two because only halfsphere is present within the model
         results.append([task[0], task[1], result])
     except:
-        results.append([task[0], task[1], np.nan])
+      results.append([task[0], task[1], np.nan])
 
 ## Report results to master process
 comm.gather(sendobj=results, root=0)
