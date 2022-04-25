@@ -1,5 +1,4 @@
 from netgen.meshing import *
-import datetime
 
 ### Source: https://github.com/NGSolve/netgen/blob/master/python/read_gmsh.py
 
