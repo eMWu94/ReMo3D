@@ -22,9 +22,6 @@ from netgen.geom2d import SplineGeometry
 from netgen.meshing import MeshingParameters, meshsize
 
 import sys
-import random
-
-
 
 def SetToolsParameters(tools):
     """
@@ -217,7 +214,7 @@ def SetModelParameters(formation_model_file, borehole_model_file, borehole_geome
     model_parameters = [formation_parameters, borehole_parameters, dip]
     return model_parameters
 
-def ComputeSyntheticLogs(tools_parameters, model_parameters, measurement_depths, domain_radius=100, mesh_size_min=0.01, mesh_size_max=100, mesh_density="moderate", processes=4, preconditioner="multigrid", condense=True):
+def ComputeSyntheticLogs(tools_parameters, model_parameters, measurement_depths, domain_radius=50, processes=4, preconditioner="multigrid", condense=True):
     """
     This function computes syntetic logs
 
@@ -237,16 +234,6 @@ def ComputeSyntheticLogs(tools_parameters, model_parameters, measurement_depths,
         A radius of simulation domain in meters.
         By default set to 100.
 
-    mesh_size_min: float, optional
-        Characterize the minimal mesh size around current electrodes.
-        By default set to 0.1.
-    
-    mesh_density: str, optional
-        Specify density of mesh. Available options: "fine", "moderate", "coarse".
-        When computing on large domain the maximal number of elements might be exceeded.
-        Therefore mesh density should be choosen with domain size in mind.
-        By default set to "moderate".
-    
     processes: int, optional
         Specify a number of processes. Minimal value that can be set is 2, the maximal value should not exceed the number of processes available on computing machine.
         By default set to 4.
@@ -329,10 +316,7 @@ def ComputeSyntheticLogs(tools_parameters, model_parameters, measurement_depths,
 
     comm.bcast(tools_parameters, root=MPI.ROOT)
     comm.bcast(simulation_depths, root=MPI.ROOT)
-    comm.bcast(mesh_density, root=MPI.ROOT)
     comm.bcast(domain_radius, root=MPI.ROOT)
-    comm.bcast(mesh_size_min, root=MPI.ROOT)
-    comm.bcast(mesh_size_max, root=MPI.ROOT)
     comm.bcast(preconditioner, root=MPI.ROOT)
     comm.bcast(condense, root=MPI.ROOT)
 
@@ -431,6 +415,11 @@ def SaveResults(model_parameters, measurement_depths, measurement_results, outpu
         Specify if plot should be breaked or continued on Nan values.
         Available options: "break" and "continue".
         By default set to "break".
+    interpolation: float, optional
+        Allows to smooth logs on vizualization.
+        Have no inpact on output data.
+        By default set to 1 (no interpolation).
+
     """
     
     ### Create output folder
@@ -535,7 +524,8 @@ def SaveResults(model_parameters, measurement_depths, measurement_results, outpu
     collection.set_array(resistivities)
     
     colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
-    plt.rcParams.update({'font.size': 12})
+    plt.rcParams.update({'font.size': 14, 'axes.labelsize': 14, 'axes.titlesize': 14, 'xtick.labelsize': 14, 'ytick.labelsize': 14, 'axes.titlepad': 14,
+        "xtick.major.size": 10, "xtick.minor.size": 5, "ytick.major.size": 10, "ytick.minor.size": 5})
 
     fig, ax = plt.subplots(1, 1+tracks, sharey=True, figsize=[fig_width, fig_hight])
     
@@ -546,8 +536,8 @@ def SaveResults(model_parameters, measurement_depths, measurement_results, outpu
     ax[0].invert_yaxis()
     ax[0].minorticks_on()
     ax[0].set_title('Formation model\n'+ 'dip = ' + str(dip) + '\N{DEGREE SIGN}\n')
-    ax[0].set_xlabel('Radial distance [m]')
-    ax[0].set_ylabel('Depth [m]')
+    ax[0].set_xlabel('Radial distance [m]', labelpad=10)
+    ax[0].set_ylabel('Depth [m]', labelpad=10)
     ticks =  ax[0].get_xticks()
     ax[0].xaxis.set_major_locator(mticker.FixedLocator(ticks))
     ax[0].set_xticklabels([tick for tick in abs(ticks)])
@@ -574,7 +564,7 @@ def SaveResults(model_parameters, measurement_depths, measurement_results, outpu
                 raise ValueError('at_nan paramater has to be set to "break" or "continue"')
             axis.set_xlabel(logs[i]+"\n[ohmm]", color=colors[i%len(colors)], labelpad=-8)
             axis.spines['top'].set_color(colors[i%len(colors)])
-            axis.spines['top'].set_position(('outward', i*50+10))
+            axis.spines['top'].set_position(('outward', i*55+10))
             axis.set_xticks(res_lim)
             axis.tick_params(axis='x', color=colors[i%len(colors)])
             axis.set_xlim(res_lim)
@@ -586,7 +576,8 @@ def SaveResults(model_parameters, measurement_depths, measurement_results, outpu
         ax[track].margins(x=0, y=0)
         ax[track].autoscale_view()
             
-    fig.colorbar(collection, ax=ax, location='bottom', orientation='horizontal', pad=0.05, label="Resistivity [ohmm]")
+    colorbar = fig.colorbar(collection, ax=ax, location='bottom', orientation='horizontal', pad=0.05, label="Resistivity [ohmm]")
+    colorbar.ax.minorticks_on()
 
     ## Save plot to png file
     plt.savefig(output_subfolder + 'Results_plot.png', bbox_inches='tight')
