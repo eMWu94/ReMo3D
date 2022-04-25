@@ -3,7 +3,7 @@ from mpi4py import MPI
 from ngsolve import *
 from ngsolve import ngsglobals
 
-from mesh_converter import ReadGmsh
+from netgen.read_gmsh import ReadGmsh
 
 import gmsh
 
@@ -259,7 +259,7 @@ def ConstructModel(domain_radius, tool_geometry, source_terms, formation_geometr
     gmsh.write("./tmp/fm_"+str(rank)+".msh")
     gmsh.finalize()
 
-    mesh = ReadGmsh("./tmp/fm_"+str(rank)+".msh", 3)
+    mesh = ReadGmsh("./tmp/fm_"+str(rank)+".msh")
     mesh = Mesh(mesh)
     
     return mesh, dirichlet_boundaries
