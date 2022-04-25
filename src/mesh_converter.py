@@ -2,8 +2,6 @@ from netgen.meshing import *
 
 ### Source: https://github.com/NGSolve/netgen/blob/master/python/read_gmsh.py
 
-# FMP - for mesh parameters
-
 def ReadGmsh(filename, meshdim):
     if not filename.endswith(".msh"):
         filename += ".msh"
