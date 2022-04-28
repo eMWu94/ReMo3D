@@ -11,6 +11,7 @@ import numpy as np
 import scipy.interpolate as spi
 import itertools
 import datetime
+import shutil
 import sys
 import os
 
@@ -364,6 +365,9 @@ def ComputeSyntheticLogs(tools_parameters, model_parameters, measurement_depths,
     ### Shutdown MPI
     comm.Disconnect()
 
+    ### Remove tmp folder with and mesh files
+    shutil.rmtree("./tmp")
+    
     ## Report time of computation
     print('\nProcessed in: ', datetime.datetime.now() - start_time)
 
