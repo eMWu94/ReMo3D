@@ -24,5 +24,5 @@ pip install git+https://github.com/eMWu94/ReMo3D.git#egg=remo3d
 The package was tested on Ubuntu 18.04, Ubuntu 20.04 and Windows 10 Pro.
 
 ## Expected computation times
-On a default settings simulation of 100 measurement points of a single logging tool on a PC equipped with AMD Ryzen 2600 CPU takes (depending on the simulated tool and complexity of the model) around 15-30 seconds in case of a 2D model and around 15-30 minutes in case of a 3D model.
+On a default settings simulation of 100 measurement points of a single logging tool on a PC equipped with AMD Ryzen 2600 CPU takes around 15-30 seconds in case of a 2D model and around 15-30 minutes in case of a 3D model of moderate complexity.
 
