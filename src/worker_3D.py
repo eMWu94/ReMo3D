@@ -371,7 +371,7 @@ for task in iter(lambda: comm.sendrecv(None, dest=0), StopIteration):
             result = abs(geometric_factor * gfu(mesh(0.0, 0.0, measuring_electodes[0])))/2 # division by two because only halfsphere is present within the model
         results.append([task[0], task[1], result])
     except:
-      results.append([task[0], task[1], np.nan])
+        results.append([task[0], task[1], np.nan])
 
 ## Report results to master process
 comm.gather(sendobj=results, root=0)
