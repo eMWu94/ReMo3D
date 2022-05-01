@@ -22,8 +22,6 @@ from netgen.csg import *
 from netgen.geom2d import SplineGeometry
 from netgen.meshing import MeshingParameters, meshsize
 
-import sys
-
 def SetToolsParameters(tools):
     """
     This function sets logging tools parameters based on their names.
