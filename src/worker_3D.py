@@ -363,7 +363,7 @@ for task in iter(lambda: comm.sendrecv(None, dest=0), StopIteration):
         # Create geometry and mesh
         mesh, dirichlet_boundaries = ConstructModel(domain_radius, tool_geometry, source_terms, local_formation_geometry, dip, local_borehole_geometry, rank)
         # Solve BVP
-        fes, gfu = SolveBVP(mesh, sigma, tool_geometry, source_terms, dirichlet_boundaries, preconditioner, condense=True)
+        fes, gfu = SolveBVP(mesh, sigma, tool_geometry, source_terms, dirichlet_boundaries, preconditioner, condense)
         measuring_electodes = tool_geometry[source_terms==0]
         if np.shape(measuring_electodes)[0] == 2:
             result = abs(geometric_factor * (gfu(mesh(0.0, 0.0, measuring_electodes[1]))-gfu(mesh(0.0, 0.0, measuring_electodes[0]))))/2 # division by two because only halfsphere is present within the model
