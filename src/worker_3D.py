@@ -211,22 +211,17 @@ def ConstructModel(domain_radius, tool_geometry, source_terms, formation_geometr
     i = 2
     for electrode_position in tool_geometry[source_terms != 0]:
         gmsh.model.mesh.field.add("MathEval", i) # Distance from the electrode
-        gmsh.model.mesh.field.setString(i, "F","(x^2 + y^2 + (z+({}))^2)^0.5".format(electrode_position))
-
-        gmsh.model.mesh.field.add("MathEval", i+1) # Meshsize field modification
-        gmsh.model.mesh.field.setString(i+1, "F", "((F{}^2)/2) + 0.01".format(i))
-
-        i += 2
+        gmsh.model.mesh.field.setString(i, "F","(x^2 + y^2 + (z+({}))^2)/2 + 0.01".format(electrode_position))
+        i += 1
 
     if np.shape(tool_geometry[source_terms != 0])[0]==1:
-        gmsh.model.mesh.field.add("Min", 4)
-        gmsh.model.mesh.field.setNumbers(4, "FieldsList", [1, 3])
-        gmsh.model.mesh.field.setAsBackgroundMesh(4)
+        gmsh.model.mesh.field.add("Min", 3)
+        gmsh.model.mesh.field.setNumbers(3, "FieldsList", [1,2])
+        gmsh.model.mesh.field.setAsBackgroundMesh(3)
     else:
-        gmsh.model.mesh.field.add("Min", 6)
-        gmsh.model.mesh.field.setNumbers(6, "FieldsList", [1, 3, 5])
-
-        gmsh.model.mesh.field.setAsBackgroundMesh(6)
+        gmsh.model.mesh.field.add("Min", 4)
+        gmsh.model.mesh.field.setNumbers(4, "FieldsList", [1,2,3])
+        gmsh.model.mesh.field.setAsBackgroundMesh(4)
 
     gmsh.option.setNumber("Mesh.Algorithm", 5)
     gmsh.model.mesh.generate(3)
