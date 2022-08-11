@@ -4,7 +4,7 @@ import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.patches import Polygon
 from matplotlib.collections import PatchCollection
-import matplotlib.ticker as mticker
+from matplotlib import ticker
 
 import linecache as lc
 import numpy as np
@@ -14,10 +14,6 @@ import datetime
 import shutil
 import sys
 import os
-
-from ngsolve import *
-from ngsolve import ngsglobals
-
 
 def SetToolsParameters(tools):
     """
@@ -316,7 +312,7 @@ def ComputeSyntheticLogs(tools_parameters, model_parameters, measurement_depths,
     ## Spawn workers
     comm = MPI.COMM_WORLD.Spawn(
         sys.executable,
-        args=[os.path.join(os.path.dirname(os.path.abspath(__file__)), 'synthetic_logs_worker.py')], 
+        args=[os.path.join(os.path.dirname(os.path.abspath(__file__)), 'worker.py')], 
         maxprocs=n_workers)
 
     ## Broadcast data to workers
@@ -554,9 +550,9 @@ def SaveResults(model_parameters, measurement_depths, measurement_results, outpu
     ax[0].set_title('Formation model\n'+ 'dip = ' + str(dip) + '\N{DEGREE SIGN}\n')
     ax[0].set_xlabel('Radial distance [m]', labelpad=10)
     ax[0].set_ylabel('Depth [m]', labelpad=10)
-    ticks =  ax[0].get_xticks()
-    ax[0].xaxis.set_major_locator(mticker.FixedLocator(ticks))
-    ax[0].set_xticklabels([tick for tick in abs(ticks)])
+    ticks = ax[0].get_xticks()
+    ax[0].xaxis.set_major_locator(ticker.FixedLocator(ticks))
+    ax[0].set_xticklabels(["{0:.2f}".format(abs(tick)) for tick in ticks])
     ax[0].xaxis.set_ticks_position('top') 
     ax[0].xaxis.set_label_position('top') 
     ax[0].autoscale_view()
@@ -597,8 +593,3 @@ def SaveResults(model_parameters, measurement_depths, measurement_results, outpu
 
     ## Save plot to png file
     plt.savefig(output_subfolder + 'Results_plot.png', bbox_inches='tight')
-
-
-
-
-

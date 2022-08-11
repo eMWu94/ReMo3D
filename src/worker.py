@@ -669,7 +669,6 @@ def Construct3dModel(domain_radius, tool_geometry, source_terms, formation_geome
     
     if output_mode == "variable":
         mesh = ReadGmsh(output_folder_path + "/fm_"+str(file_number)+".msh", 3)
-        #mesh = ReadGmsh("./tmp/fm_"+str(file_number)+".msh")
         mesh = Mesh(mesh)
         
         return mesh, dirichlet_boundaries
@@ -705,43 +704,22 @@ def SolveBVP(mesh, sigma, tool_geometry, source_terms, preconditioner, condense)
     #start_time = datetime.datetime.now()  
     f = LinearForm(fes)
     f.Assemble()
-    #print('0', datetime.datetime.now() - start_time)
-
 
     for l in range(np.shape(source_terms)[0]):
         if source_terms[l] != 0.0:
             AddPointSource (f, tool_geometry[l], source_terms[l], model_dimensionality)
 
-    #start_time = datetime.datetime.now()
     c = Preconditioner(a, preconditioner)
-    #print('1', datetime.datetime.now() - start_time)
-
-    #start_time = datetime.datetime.now()
     a.Assemble()
-    #print('2', datetime.datetime.now() - start_time)
-
-    #start_time = datetime.datetime.now()
     gfu = GridFunction(fes)
-    #print('3', datetime.datetime.now() - start_time)
-
-    #start_time = datetime.datetime.now()
     inv = CGSolver(a.mat, c.mat, maxsteps=1000)
-    #print('4', datetime.datetime.now() - start_time)
-
-    #start_time = datetime.datetime.now()
     if condense==True:
         f.vec.data += a.harmonic_extension_trans * f.vec
-    #print('5', datetime.datetime.now() - start_time)
-
-    #start_time = datetime.datetime.now()
     gfu.vec.data = inv * f.vec
-    #print('6', datetime.datetime.now() - start_time)
 
-    #start_time = datetime.datetime.now()
     if condense==True:
         gfu.vec.data += a.harmonic_extension * gfu.vec
         gfu.vec.data += a.inner_solve * f.vec
-    #print('7', datetime.datetime.now() - start_time)
 
     return(fes, gfu)
 
@@ -810,10 +788,8 @@ for task in iter(lambda: comm.sendrecv(None, dest=0), StopIteration):
         if dip==0:
             if np.shape(measuring_electodes)[0] == 2:
                 result = abs(geometric_factor * (gfu(mesh(0.0, measuring_electodes[1]))-gfu(mesh(0.0, measuring_electodes[0]))))
-                print(gfu(mesh(0.0, measuring_electodes[1])), gfu(mesh(0.0, measuring_electodes[0])))
             elif np.shape(measuring_electodes)[0] == 1:
                 result = abs(geometric_factor * gfu(mesh(0.0, measuring_electodes[0])))
-                print(gfu(mesh(0.0, measuring_electodes[0])))
         else:
             if np.shape(measuring_electodes)[0] == 2:
                 result = abs(geometric_factor * (gfu(mesh(0.0, 0.0, measuring_electodes[1]))-gfu(mesh(0.0, 0.0, measuring_electodes[0]))))/2 # division by two because only halfsphere is present within the model
