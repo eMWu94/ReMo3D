@@ -2,7 +2,6 @@
 ReMo3D is a Python package that allows to generate synthetic normal and lateral logs for complex 2D and 3d models. The package is built around a finite element mesh generator Gmsh and a high-performance multiphysics finite element software Netgen/NGSolve and supports distributed-memory parallel computation.
 
 ## Installation
-
 The following software is required to use ReMo3D package:
 - MPI implementation (recommended Mpich for Linux and Microsoft MPI for Windows),
 - Gmsh,
