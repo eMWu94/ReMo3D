@@ -25,7 +25,7 @@ from netgen.meshing import MeshingParameters, meshsize
 from ngsolve import *
 
 
-#  Main functions 
+##  Main functions 
 
 def SetToolsParameters(tools):
     """
@@ -244,8 +244,8 @@ def ComputeSyntheticLogs(tools_parameters, model_parameters, measurement_depths,
         By default set to 4.
 
     mesh_generator: string, optional
-        Specify utilezed mesh generator.
-        For 2D models can be set to "gmsh" or "netgen", for 3D models it have to be set to "Gmsh".
+        Specify utiliezed mesh generator.
+        For 2D models can be set to "gmsh" or "netgen", for 3D models it have to be set to "gmsh".
         By default set to "gmsh".
  
     preconditioner: string, optional
@@ -595,7 +595,7 @@ def SaveResults(model_parameters, measurement_depths, measurement_results, outpu
     plt.savefig(output_subfolder + 'Results_plot.png', bbox_inches='tight')
 
 
-# Helper functions utilized in main funcions and workers
+## Helper functions utilized in main funcions and workers
 
 # GMSH functions
 
@@ -1103,7 +1103,7 @@ def ConstructGmsh2dModel(domain_radius, tool_geometry, source_terms, formation_g
         gmsh.model.mesh.field.setNumbers(4, "FieldsList", [1,2,3])
         gmsh.model.mesh.field.setAsBackgroundMesh(4)
     
-    gmsh.option.setNumber("Mesh.Algorithm", 5)
+    gmsh.option.setNumber("Mesh.Algorithm", 6)
     gmsh.model.mesh.generate(2)
 
     dimention, lines = list(zip(*gmsh.model.occ.getEntities(1)))
@@ -1392,7 +1392,7 @@ def SelectNetgenDataRange(borehole_geometry, formation_parameters, mud_resistivi
     formation_resistivity_distribution = np.ndarray.flatten(local_formation_model[:,3:5])
     formation_resistivity_distribution = formation_resistivity_distribution[~np.isnan(formation_resistivity_distribution)]
 
-    local_conductivity_distribution = CoefficientFunction([1/mud_resistivity] + list(1/formation_resistivity_distribution)) #Conductivity within different parts of model
+    local_conductivity_distribution = CoefficientFunction([1/mud_resistivity] + list(1/formation_resistivity_distribution)) # Conductivity within different parts of model
 
     return (local_formation_geometry, local_borehole_geometry, local_conductivity_distribution)
 
@@ -1603,9 +1603,7 @@ def ConstructNetgen2dModel(domain_radius, tool_geometry, formation_geometry, bor
 
 # Ngsolve funtions
 
-def SolveBVP(mesh, sigma, tool_geometry, source_terms, dirichlet_boundary, preconditioner, condense):
-
-    def AddPointSource(f, position, fac, model_dimensionality):
+def AddPointSource(f, position, fac, model_dimensionality):
         spc = f.space
         if model_dimensionality==2:
             mp = spc.mesh(0,position)
@@ -1617,6 +1615,8 @@ def SolveBVP(mesh, sigma, tool_geometry, source_terms, dirichlet_boundary, preco
         shape = fel.CalcShape(*mp.pnt)
         for d,s in zip(dnums, shape):
             f.vec[d] += fac*s
+
+def SolveBVP(mesh, sigma, tool_geometry, source_terms, dirichlet_boundary, preconditioner, condense):
 
     model_dimensionality = mesh.dim
 
@@ -1652,4 +1652,3 @@ def SolveBVP(mesh, sigma, tool_geometry, source_terms, dirichlet_boundary, preco
         gfu.vec.data += a.inner_solve * f.vec
 
     return(fes, gfu)
-

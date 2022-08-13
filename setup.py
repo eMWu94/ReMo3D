@@ -3,8 +3,8 @@ from setuptools import setup
 setup(
     name='remo3d',
     version='1.0.0',
-    author='',
-    author_email='',
+    author='Michał Wilkosz',
+    author_email='michal.m.wilkosz@gmail.com',
     description='ReMo3D is a Python package that allows to generate synthetic normal and lateral logs for 2D and 3D models',
     py_modules=['remo3d', 'worker'],
     package_dir={'': 'src'},
