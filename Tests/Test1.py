@@ -28,10 +28,10 @@ model_parameters = rm.SetModelParameters(formation_model_file, borehole_model_fi
 
 # Compute synthetic logs
 logs = rm.ComputeSyntheticLogs_v2(tools_parameters, model_parameters, measurement_depths, force_single_electrode_configuration=True,
-                               domain_radius=25, processes=12, mesh_generator="netgen")
+                               domain_radius=50, processes=12, mesh_generator="netgen")
 
 # Save results
 output_folder = "./Output" # path to output folder
 rm.SaveResults(model_parameters, logs, output_folder=output_folder, 
-               plot_layout=[["B5.7A0.4M", "M5.7N0.4A"], ["M2.0A0.5B", "A2.0M0.5N"]],
-               depth_lim=[0,25], rad_lim=[-1,1], res_lim=[0,30], aspect_ratio=1.25, at_nan="continue")
+               plot_layout=[["B5.7A0.4M"], ["M5.7N0.4A"], ["M2.0A0.5B"], ["A2.0M0.5N"]],
+               depth_lim=[0,25], rad_lim=[-1,1], res_lim=[0,30], aspect_ratio=0.5, at_nan="continue")

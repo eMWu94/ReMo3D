@@ -328,7 +328,7 @@ def ComputeSyntheticLogs(tools_parameters, model_parameters, measurement_depths,
     return logs
 
 
-def SaveResults(model_parameters, measurement_results, output_folder=None, measurement_to_save="auto", plot_layout="auto", depth_lim="auto", rad_lim="auto", res_lim="auto", model_res_lim="auto", aspect_ratio = "auto", at_nan="break", interpolation_factor=1, colors="auto"):
+def SaveResults(model_parameters, measurement_results, measurement_to_save="auto", output_folder=None, plot_layout="auto", depth_lim="auto", rad_lim="auto", res_lim="auto", model_res_lim="auto", aspect_ratio = "auto", at_nan="break", interpolation_factor=1, colors="auto"):
     """
     This function saves results of modelling to txt file and produces raw visualization of the model and computed syntetic logs that is saved in PNG format.
 
@@ -339,15 +339,15 @@ def SaveResults(model_parameters, measurement_results, output_folder=None, measu
 
     measurement_results: dict
         A dictionary of 1D numpy arrays created by the ComputeSynteticLogs function.
-       
+        
+    measurement_to_save: str or list
+        A list of measurements to save.
+        By default set to "auto" will save all measurements.
+
     output_folder: str
         A path to the folder where results will be saved.
         By default set to None will only show results without saving them.
-    
-    measurement_to_save: str or list
-        A list of measurements to save to txt file.
-        By default set to "auto" will save all measurements.
-    
+
     plot_layout: list, optional
         a list of sublists of tool names. Each sublist consist of tool names assigned to certain track.
         By default set to "auto" will plot all logs on a sigle track.
@@ -379,6 +379,7 @@ def SaveResults(model_parameters, measurement_results, output_folder=None, measu
     interpolation_factor: float, optional
         Allows to smooth logs on vizualization. Have no inpact on output data.
         By default set to 1 (no interpolation).
+
     """
     
     if output_folder!=None:
@@ -1786,7 +1787,6 @@ def ComputeSyntheticLogs_v2(tools_parameters, model_parameters, measurement_dept
         if np.isclose(np.sum(tools_parameters[tool][1,:3]), 0)==True:
             single_electrode_computation_mode = False
             
-    
     ## Model
     formation_parameters = model_parameters[0]
     borehole_parameters = model_parameters[1]
