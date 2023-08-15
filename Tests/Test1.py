@@ -27,8 +27,8 @@ tools_parameters = rm.SetToolsParameters(tools)
 model_parameters = rm.SetModelParameters(formation_model_file, borehole_model_file)
 
 # Compute synthetic logs
-logs = rm.ComputeSyntheticLogs(tools_parameters, model_parameters, measurement_depths, tools_version="alternative",
-                               domain_radius=25, processes=12, mesh_generator="gmsh")
+logs = rm.ComputeSyntheticLogs_v2(tools_parameters, model_parameters, measurement_depths, force_single_electrode_configuration=True,
+                               domain_radius=25, processes=12, mesh_generator="netgen")
 
 # Save results
 output_folder = "./Output" # path to output folder

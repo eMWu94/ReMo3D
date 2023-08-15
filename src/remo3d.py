@@ -47,116 +47,20 @@ def SetToolsParameters(tools):
         A dictionary of numpy arrays that specify parameters of logging tools.
     """
 
-    def str2float(item):
-        """
-        This function convert item from strings to floats (if possible).
-        """
-        try:
-            return float(item)
-        except ValueError:
-            return item
-
-    #def checktoolconfiguration(tool):
-        
-   
-    def settoolparameters(tool, electrodes, distances):
-        
-        
-        # Check if tool configuration is correct and set electrodes position in relation to measurment point position
-        if len(electrodes)!=3 or np.shape(distances)[0]!=2 or min(distances)<=0:
-            raise ValueError("{} logging tool specification is uncorrect".format(tool))
-
-        correct_configurations = itertools.permutations(["A", "B", "M", "N"], 3) # all correct electrodes configurations
-       
-        if electrodes in list(correct_configurations):
-            # Calculate measurement point position in relation to the top electrode positon set to 0
-            if distances[0] < distances[1]:
-                z_mp =  distances[0]/2
-            elif distances[0] > distances[1]:
-                z_mp =  distances[0] + distances[1]/2
-            else:
-                raise ValueError("{} logging tool specification is uncorrect".format(tool))
-            # Calculate electrodes positions in relation to measurment point position set to 0
-            positons = np.array([0, 0+distances[0], 0+distances[0]+distances[1]]) # electrodes positions in relation to the top electrode positon set to 0
-            z_a, z_b, z_m, z_n = np.NaN, np.NaN, np.NaN, np.NaN
-            for i in range(3):
-                if electrodes[i]=='A':
-                    z_a = positons[i] - z_mp
-                elif electrodes[i]=='B':
-                    z_b = positons[i] - z_mp
-                elif electrodes[i]=='M':
-                    z_m = positons[i] - z_mp
-                elif electrodes[i]=='N':
-                    z_n = positons[i] - z_mp
-        else:
-            raise ValueError("{} logging tool specification is uncorrect".format(tool))
-        
-        ## Calculate and arrange tool parameters into an array
-        # alternate_source_terms - for 1 current electrode configuration (will not change the results of modelling)
-        if np.isnan(z_a):
-            BM = abs(z_b - z_m)
-            BN = abs(z_b - z_n)
-            geometric_factor = abs(4*np.pi*BM*BN/(BN-BM))
-            depth_shift = z_b
-            available_electrodes = np.array([z_b, z_m, z_n])
-            source_terms = np.array([1, 0, 0])
-        elif np.isnan(z_b):
-            AM = abs(z_a - z_m)
-            AN = abs(z_a - z_n)
-            geometric_factor = abs(4*np.pi*AM*AN/(AN-AM))
-            depth_shift = z_a
-            available_electrodes = np.array([z_a, z_m, z_n])
-            source_terms = np.array([1, 0, 0])
-        elif np.isnan(z_m):
-            AN = abs(z_a - z_n)
-            BN = abs(z_b - z_n)
-            geometric_factor = abs(4*np.pi*AN*BN/(AN-BN))
-            depth_shift = (z_a+z_b)/2
-            available_electrodes = np.array([z_a, z_b, z_n])
-            source_terms = np.array([1, -1, 0])
-        elif np.isnan(z_n):
-            AM = abs(z_a - z_m)
-            BM = abs(z_b - z_m)
-            geometric_factor = abs(4*np.pi*AM*BM/(BM-AM))
-            depth_shift = (z_a+z_b)/2
-            available_electrodes = np.array([z_a, z_b, z_m])
-            source_terms = np.array([1, -1, 0])
-
-        sort_order = np.argsort([available_electrodes])
-        tool_geometry = np.ndarray.flatten(available_electrodes[sort_order])
-        source_terms = np.ndarray.flatten(source_terms[sort_order])
-        
-        # Merge tool parameters
-        tool_parameters = np.hstack([np.vstack([tool_geometry, source_terms]), np.array([[geometric_factor], [depth_shift]])])
-
-        return tool_parameters 
-
     ### Check if data format is correct
     if type(tools)!=list or all(isinstance(s, str) for s in tools)==False:
         raise ValueError("Tools names have to be provided in the form of list of strings")
 
     ### Set tools parameters
     tools_parameters = dict()
-    for base_tool in tools:
+    for tool in tools:
         
         # Extract information about tool geometry from the tool name
-        base_tool_data = [str2float(item) for item in [''.join(group) for _, group in itertools.groupby(base_tool, str.isalpha)]]
-        base_electrodes = tuple(x for x in base_tool_data if isinstance(x, str)) # symbols of eletrodes
-        base_distances = [x for x in base_tool_data if isinstance(x, float)] # distances between electrodes
-        base_tool_parameters = settoolparameters(base_tool, base_electrodes, base_distances)
-
-        if "A" in base_electrodes and "B" in base_electrodes:
-            alternative_tool = base_tool.translate(str.maketrans("ABMN", "MNAB"))
-            
-            alternative_tool_data = [str2float(item) for item in [''.join(group) for _, group in itertools.groupby(alternative_tool, str.isalpha)]]
-            alternative_electrodes = tuple(x for x in alternative_tool_data if isinstance(x, str)) # symbols of eletrodes
-            alternative_distances = [x for x in alternative_tool_data if isinstance(x, float)] # distances between electrodes
-            alternative_tool_parameters = settoolparameters(alternative_tool, alternative_electrodes, alternative_distances)
-        else:
-            alternative_tool_parameters = base_tool_parameters
-        
-        ## Add tool to dictionary
-        tools_parameters[base_tool] = [base_tool_parameters, alternative_tool_parameters]
+        tool_data = [str2float(item) for item in [''.join(group) for _, group in itertools.groupby(tool, str.isalpha)]]
+        electrodes = tuple(x for x in tool_data if isinstance(x, str)) # symbols of eletrodes
+        distances = [x for x in tool_data if isinstance(x, float)] # distances between electrodes
+        ## Create tool parameters and add tool to dictionary
+        tools_parameters[tool] = SetToolParameters(tool, electrodes, distances)         
 
     return tools_parameters
 
@@ -243,7 +147,7 @@ def SetModelParameters(formation_model_file, borehole_model_file, borehole_geome
     model_parameters = [formation_parameters, borehole_parameters, dip]
     return model_parameters
 
-def ComputeSyntheticLogs(tools_parameters, model_parameters, measurement_depths, tools_version="base", domain_radius=50, processes=4, mesh_generator="gmsh", preconditioner="multigrid", condense=True):
+def ComputeSyntheticLogs(tools_parameters, model_parameters, measurement_depths, force_single_electrode_configuration=False, domain_radius=50, processes=4, mesh_generator="gmsh", preconditioner="multigrid", condense=True):
     """
     This function computes syntetic logs.
 
@@ -259,9 +163,10 @@ def ComputeSyntheticLogs(tools_parameters, model_parameters, measurement_depths,
         A 1D numpy array of depths of simulated measurements.
         Values have to be given in ascending order and corespond to depths of the model.
 
-    tools_version: str
-        Specifies utilized version of tool parameters. Can be set to "bese" or "alternative".
-        By default set to "base".
+    force_single_electrode_configuration: str
+        Specifies if two-electrode tool configurations will be changed to single-electrode tool configurations.
+        Enables faster computations. Can be set to True or False.
+        By default set to False.
         
     domain_radius: float, optional
         A radius of simulation domain in meters.
@@ -299,17 +204,18 @@ def ComputeSyntheticLogs(tools_parameters, model_parameters, measurement_depths,
         os.makedirs("./tmp")
 
     ### Unpack parameters and prepare data
-    tools = {}
-    
-    for tool in tools_parameters.keys():
-        if tools_version=="base":
-            tools[tool] = tools_parameters[tool][0]
-        elif tools_version=="alternative":
-            tools[tool] = tools_parameters[tool][1]
-        else:
-            raise ValueError("The value of parameter tools_version can be set only to 'base' or 'alternative'")
-
-    tools_parameters = tools
+    if force_single_electrode_configuration==False:
+        pass
+    elif force_single_electrode_configuration==True:
+        for tool in tools_parameters.keys():
+            if "A" in tool and "B" in tool:
+                alternative_tool = tool.translate(str.maketrans("ABMN", "MNAB"))
+                alternative_tool_data = [str2float(item) for item in [''.join(group) for _, group in itertools.groupby(alternative_tool, str.isalpha)]]
+                alternative_electrodes = tuple(x for x in alternative_tool_data if isinstance(x, str)) # symbols of eletrodes
+                alternative_distances = [x for x in alternative_tool_data if isinstance(x, float)] # distances between electrodes
+                tools_parameters[tool] = SetToolParameters(alternative_tool, alternative_electrodes, alternative_distances)
+    else:
+        raise ValueError("The value of parameter force_single_electrode_configuration can be set only to True or False")
     
     formation_parameters = model_parameters[0]
     borehole_parameters = model_parameters[1]
@@ -473,7 +379,6 @@ def SaveResults(model_parameters, measurement_results, output_folder=None, measu
     interpolation_factor: float, optional
         Allows to smooth logs on vizualization. Have no inpact on output data.
         By default set to 1 (no interpolation).
-
     """
     
     if output_folder!=None:
@@ -667,7 +572,92 @@ def SaveResults(model_parameters, measurement_results, output_folder=None, measu
         plt.savefig(output_subfolder + 'Results_plot.png', bbox_inches='tight')
 
 
-## Helper functions utilized in main funcions and workers
+## Helper functions utilized within main funcions and workers
+
+def str2float(item):
+    """
+    This function convert item from strings to floats (if possible).
+    """
+    try:
+        return float(item)
+    except ValueError:
+        return item
+        
+def SetToolParameters(tool, electrodes, distances):
+    """
+    This function is constructing single tool parameters.
+    """
+
+    # Check if tool configuration is correct and set electrodes position in relation to measurment point position
+    if len(electrodes)!=3 or np.shape(distances)[0]!=2 or min(distances)<=0:
+        raise ValueError("{} logging tool specification is uncorrect".format(tool))
+
+    correct_configurations = itertools.permutations(["A", "B", "M", "N"], 3) # all correct electrodes configurations
+
+    if electrodes in list(correct_configurations):
+        # Calculate measurement point position in relation to the top electrode positon set to 0
+        if distances[0] < distances[1]:
+            z_mp =  distances[0]/2
+        elif distances[0] > distances[1]:
+            z_mp =  distances[0] + distances[1]/2
+        else:
+            raise ValueError("{} logging tool specification is uncorrect".format(tool))
+        # Calculate electrodes positions in relation to measurment point position set to 0
+        positons = np.array([0, 0+distances[0], 0+distances[0]+distances[1]]) # electrodes positions in relation to the top electrode positon set to 0
+        z_a, z_b, z_m, z_n = np.NaN, np.NaN, np.NaN, np.NaN
+        for i in range(3):
+            if electrodes[i]=='A':
+                z_a = positons[i] - z_mp
+            elif electrodes[i]=='B':
+                z_b = positons[i] - z_mp
+            elif electrodes[i]=='M':
+                z_m = positons[i] - z_mp
+            elif electrodes[i]=='N':
+                z_n = positons[i] - z_mp
+    else:
+        raise ValueError("{} logging tool specification is uncorrect".format(tool))
+
+    ## Calculate and arrange tool parameters into an array
+    # alternate_source_terms - for 1 current electrode configuration (will not change the results of modelling)
+    if np.isnan(z_a):
+        BM = abs(z_b - z_m)
+        BN = abs(z_b - z_n)
+        geometric_factor = abs(4*np.pi*BM*BN/(BN-BM))
+        depth_shift = z_b
+        available_electrodes = np.array([z_b, z_m, z_n])
+        source_terms = np.array([1, 0, 0])
+    elif np.isnan(z_b):
+        AM = abs(z_a - z_m)
+        AN = abs(z_a - z_n)
+        geometric_factor = abs(4*np.pi*AM*AN/(AN-AM))
+        depth_shift = z_a
+        available_electrodes = np.array([z_a, z_m, z_n])
+        source_terms = np.array([1, 0, 0])
+    elif np.isnan(z_m):
+        AN = abs(z_a - z_n)
+        BN = abs(z_b - z_n)
+        geometric_factor = abs(4*np.pi*AN*BN/(AN-BN))
+        depth_shift = (z_a+z_b)/2
+        available_electrodes = np.array([z_a, z_b, z_n])
+        source_terms = np.array([1, -1, 0])
+    elif np.isnan(z_n):
+        AM = abs(z_a - z_m)
+        BM = abs(z_b - z_m)
+        geometric_factor = abs(4*np.pi*AM*BM/(BM-AM))
+        depth_shift = (z_a+z_b)/2
+        available_electrodes = np.array([z_a, z_b, z_m])
+        source_terms = np.array([1, -1, 0])
+
+    sort_order = np.argsort([available_electrodes])
+    tool_geometry = np.ndarray.flatten(available_electrodes[sort_order])
+    source_terms = np.ndarray.flatten(source_terms[sort_order])
+
+    # Merge tool parameters
+    tool_parameters = np.hstack([np.vstack([tool_geometry, source_terms]), np.array([[geometric_factor], [depth_shift]])])
+
+    return tool_parameters 
+
+
 
 # GMSH functions
 
@@ -1732,9 +1722,9 @@ def SolveBVP(mesh, sigma, tool_geometry, source_terms, dirichlet_boundary, preco
 
 ### Work in progress versions
 
-def ComputeSyntheticLogs_v2(tools_parameters, model_parameters, measurement_depths, tools_version="base", domain_radius=50, processes=4, mesh_generator="gmsh", preconditioner="multigrid", condense=True):
+def ComputeSyntheticLogs_v2(tools_parameters, model_parameters, measurement_depths, force_single_electrode_configuration=False, domain_radius=50, processes=4, mesh_generator="gmsh", preconditioner="multigrid", condense=True):
 
-    def prepare_tasks(tools_parameters, measurement_depths):
+    def prepare_simulation_depths_and_tasks(tools_parameters, measurement_depths):
 
         current_electrode_depths = {}
         for tool in tools_parameters.keys():
@@ -1756,7 +1746,6 @@ def ComputeSyntheticLogs_v2(tools_parameters, model_parameters, measurement_dept
                     tool_electrodes[0,:] -= tools_parameters[tool][1,3] 
                     potential_electodes_depths += list(tool_electrodes[0, tool_electrodes[1,:]==0])
 
-
             unique_potential_electodes_depths = np.unique(potential_electodes_depths)
             combined_tools = np.zeros((2, len(unique_potential_electodes_depths)+1))
             combined_tools[1,0] = 1
@@ -1776,27 +1765,37 @@ def ComputeSyntheticLogs_v2(tools_parameters, model_parameters, measurement_dept
         os.makedirs("./tmp")
 
     ### Unpack parameters and prepare data
-    tools = {}
+    ## Tools
+    # Convert tools to single-electrode configurations
+    if force_single_electrode_configuration==False:
+        pass
+    elif force_single_electrode_configuration==True:
+        for tool in tools_parameters.keys():
+            if "A" in tool and "B" in tool:
+                alternative_tool = tool.translate(str.maketrans("ABMN", "MNAB"))
+                alternative_tool_data = [str2float(item) for item in [''.join(group) for _, group in itertools.groupby(alternative_tool, str.isalpha)]]
+                alternative_electrodes = tuple(x for x in alternative_tool_data if isinstance(x, str)) # symbols of eletrodes
+                alternative_distances = [x for x in alternative_tool_data if isinstance(x, float)] # distances between electrodes
+                tools_parameters[tool] = SetToolParameters(alternative_tool, alternative_electrodes, alternative_distances)
+    else:
+        raise ValueError("The value of parameter force_single_electrode_configuration can be set only to True or False")
     
+    # Check if all tools are in single-electode configuration
+    single_electrode_computation_mode = True
     for tool in tools_parameters.keys():
-        if tools_version=="base":
-            tools[tool] = tools_parameters[tool][0]
-        elif tools_version=="alternative":
-            tools[tool] = tools_parameters[tool][1]
-        else:
-            raise ValueError("The value of parameter tools_version can be set only to 'base' or 'alternative'")
-
-    tools_parameters = tools
+        if np.isclose(np.sum(tools_parameters[tool][1,:3]), 0)==True:
+            single_electrode_computation_mode = False
+            
     
+    ## Model
     formation_parameters = model_parameters[0]
     borehole_parameters = model_parameters[1]
     dip = model_parameters[2]*np.pi/180 #converted to radians
-
-    #simulation_depths = dict()
+   
+    ## Simulation domain
     domain_radius_alert = False
     for tool in tools_parameters.keys():
         tools_parameters[tool][0,:3] -= tools_parameters[tool][1,3] # center simulation around current electrodes
-        #simulation_depths[tool] = measurement_depths + tools_parameters[tool][1,3]
         if np.max(np.abs(tools_parameters[tool][0,:3])) > domain_radius:
             raise ValueError("Some electrodes are locate outside the simulation domain. Domain size have to be increased")
         elif np.max(np.abs(tools_parameters[tool][0,:3])) > 0.75*domain_radius:
@@ -1807,7 +1806,6 @@ def ComputeSyntheticLogs_v2(tools_parameters, model_parameters, measurement_dept
     if dip!=0 and mesh_generator!="gmsh":
         raise ValueError("The only mesh generator supported in 3D models is gmsh")
     
-    #print(simulation_depths)
     # Create dense borehole geometry for the purpose of 3D mesh generation (necessary to avoid errors during meshing procedure)
     if dip!=0:
         borehole_parameters = AddPointsToBorehole(borehole_parameters, 0.15)
@@ -1816,26 +1814,49 @@ def ComputeSyntheticLogs_v2(tools_parameters, model_parameters, measurement_dept
 
     ### Parallel FEM computation
     
-    ## Compute simulation depths and prepare tasks
-    simulation_depths, task_list = prepare_tasks(tools_parameters, measurement_depths)
-    n_tasks = len(task_list)
-    
-    mud_resistivities = np.interp(simulation_depths, borehole_parameters[:,0], borehole_parameters[:,2])
+    tool_list = list(range(len(tools_parameters.keys())))
+    measurement_depths_list = list(range(len(measurement_depths)))
 
-    ## Specify number of workers
+    ## Compute simulation depths and prepare tasks
+    if single_electrode_computation_mode==False:
+        simulation_depths = dict()
+        for tool in tools_parameters.keys():
+            simulation_depths[tool] = measurement_depths + tools_parameters[tool][1,3]
+        task_list = []   
+        for task in itertools.product(measurement_depths_list, tool_list):
+            task_list.append(list(task))
+        n_tasks = np.shape(measurement_depths)[0]
+        
+    elif single_electrode_computation_mode==True:
+        simulation_depths, task_list = prepare_simulation_depths_and_tasks(tools_parameters, measurement_depths)
+        n_tasks = len(task_list)
+
+    # Mud resistivities at simulation depths
+    if single_electrode_computation_mode==False:
+        mud_resistivities = np.interp(measurement_depths, borehole_parameters[:,0], borehole_parameters[:,2])   
+    elif single_electrode_computation_mode==True:
+        mud_resistivities = np.interp(simulation_depths, borehole_parameters[:,0], borehole_parameters[:,2])
     
+    ## Specify number of workers
     if type(processes) != int:
         raise ValueError("The number of processes have to be intager")
     if processes < 2:
         raise ValueError("Minimal number of processes is 2")
     
-    n_workers = processes - 1 # one process is reserved for the master, the rest for the workers
+    n_workers = processes - 1 # one process is reserved for the main
     
     ## Spawn workers
-    comm = MPI.COMM_WORLD.Spawn(
-        sys.executable,
-        args=[os.path.join(os.path.dirname(os.path.abspath(__file__)), 'worker_v2.py')], 
-        maxprocs=n_workers)
+    
+    if single_electrode_computation_mode==False:
+        comm = MPI.COMM_WORLD.Spawn(
+            sys.executable,
+            args=[os.path.join(os.path.dirname(os.path.abspath(__file__)), 'worker.py')], 
+            maxprocs=n_workers)        
+    elif single_electrode_computation_mode==True:
+        comm = MPI.COMM_WORLD.Spawn(
+            sys.executable,
+            args=[os.path.join(os.path.dirname(os.path.abspath(__file__)), 'worker_se.py')], 
+            maxprocs=n_workers)
 
     ## Broadcast data to workers
     # Broadcast information about shapes of broadcasted arrays
@@ -1858,11 +1879,6 @@ def ComputeSyntheticLogs_v2(tools_parameters, model_parameters, measurement_dept
     comm.barrier()
 
     ## Convert tasks to mesages 
-    # task_list = []   
-    tool_list = list(range(len(tools_parameters.keys())))
-    measurement_depths_list = list(range(len(measurement_depths)))
-    # for task in itertools.product(measurement_depths_list, tool_list):
-    #     task_list.append(list(task))
     msg_list = task_list + ([StopIteration] * n_workers) # Append stop sentinel for each worker
 
     ## Dispatch tasks to workers
@@ -1896,7 +1912,7 @@ def ComputeSyntheticLogs_v2(tools_parameters, model_parameters, measurement_dept
     ### Shutdown MPI
     comm.Disconnect()
 
-    ### Remove tmp folder with and mesh files
+    ### Remove tmp folder and mesh files
     shutil.rmtree("./tmp")
 
     ## Report time of computation
