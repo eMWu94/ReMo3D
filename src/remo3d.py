@@ -3,6 +3,7 @@ from mpi4py import MPI
 import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.patches import Polygon
+from matplotlib.lines import Line2D
 from matplotlib.collections import PatchCollection
 from matplotlib import ticker
 
@@ -55,19 +56,13 @@ def SetToolsParameters(tools):
         except ValueError:
             return item
 
-    ### Check if data format is correct
-    if type(tools)!=list or all(isinstance(s, str) for s in tools)==False:
-        raise ValueError("Tools names have to be provided in the form of list of strings")
-
-    ### Set tools parameters
-    tools_parameters = dict()
-    for tool in tools:
-        ## Extract information about tool geometry from the tool name
-        tool_data = [str2float(item) for item in [''.join(group) for _, group in itertools.groupby(tool, str.isalpha)]]
-        electrodes = tuple(x for x in tool_data if isinstance(x, str)) # symbols of eletrodes
-        distances = [x for x in tool_data if isinstance(x, float)] # distances between electrodes
-
-        ## Check if tool configuration is correct and set electrodes position in relation to measurment point position
+    #def checktoolconfiguration(tool):
+        
+   
+    def settoolparameters(tool, electrodes, distances):
+        
+        
+        # Check if tool configuration is correct and set electrodes position in relation to measurment point position
         if len(electrodes)!=3 or np.shape(distances)[0]!=2 or min(distances)<=0:
             raise ValueError("{} logging tool specification is uncorrect".format(tool))
 
@@ -97,6 +92,7 @@ def SetToolsParameters(tools):
             raise ValueError("{} logging tool specification is uncorrect".format(tool))
         
         ## Calculate and arrange tool parameters into an array
+        # alternate_source_terms - for 1 current electrode configuration (will not change the results of modelling)
         if np.isnan(z_a):
             BM = abs(z_b - z_m)
             BN = abs(z_b - z_n)
@@ -129,10 +125,38 @@ def SetToolsParameters(tools):
         sort_order = np.argsort([available_electrodes])
         tool_geometry = np.ndarray.flatten(available_electrodes[sort_order])
         source_terms = np.ndarray.flatten(source_terms[sort_order])
-        tool_parameters = np.hstack([np.vstack([tool_geometry, source_terms]), np.array([[geometric_factor],[depth_shift]])])
+        
+        # Merge tool parameters
+        tool_parameters = np.hstack([np.vstack([tool_geometry, source_terms]), np.array([[geometric_factor], [depth_shift]])])
 
+        return tool_parameters 
+
+    ### Check if data format is correct
+    if type(tools)!=list or all(isinstance(s, str) for s in tools)==False:
+        raise ValueError("Tools names have to be provided in the form of list of strings")
+
+    ### Set tools parameters
+    tools_parameters = dict()
+    for base_tool in tools:
+        
+        # Extract information about tool geometry from the tool name
+        base_tool_data = [str2float(item) for item in [''.join(group) for _, group in itertools.groupby(base_tool, str.isalpha)]]
+        base_electrodes = tuple(x for x in base_tool_data if isinstance(x, str)) # symbols of eletrodes
+        base_distances = [x for x in base_tool_data if isinstance(x, float)] # distances between electrodes
+        base_tool_parameters = settoolparameters(base_tool, base_electrodes, base_distances)
+
+        if "A" in base_electrodes and "B" in base_electrodes:
+            alternative_tool = base_tool.translate(str.maketrans("ABMN", "MNAB"))
+            
+            alternative_tool_data = [str2float(item) for item in [''.join(group) for _, group in itertools.groupby(alternative_tool, str.isalpha)]]
+            alternative_electrodes = tuple(x for x in alternative_tool_data if isinstance(x, str)) # symbols of eletrodes
+            alternative_distances = [x for x in alternative_tool_data if isinstance(x, float)] # distances between electrodes
+            alternative_tool_parameters = settoolparameters(alternative_tool, alternative_electrodes, alternative_distances)
+        else:
+            alternative_tool_parameters = base_tool_parameters
+        
         ## Add tool to dictionary
-        tools_parameters[tool] = tool_parameters
+        tools_parameters[base_tool] = [base_tool_parameters, alternative_tool_parameters]
 
     return tools_parameters
 
@@ -219,7 +243,7 @@ def SetModelParameters(formation_model_file, borehole_model_file, borehole_geome
     model_parameters = [formation_parameters, borehole_parameters, dip]
     return model_parameters
 
-def ComputeSyntheticLogs(tools_parameters, model_parameters, measurement_depths, domain_radius=50, processes=4, mesh_generator="gmsh", preconditioner="multigrid", condense=True):
+def ComputeSyntheticLogs(tools_parameters, model_parameters, measurement_depths, tools_version="base", domain_radius=50, processes=4, mesh_generator="gmsh", preconditioner="multigrid", condense=True):
     """
     This function computes syntetic logs.
 
@@ -235,6 +259,10 @@ def ComputeSyntheticLogs(tools_parameters, model_parameters, measurement_depths,
         A 1D numpy array of depths of simulated measurements.
         Values have to be given in ascending order and corespond to depths of the model.
 
+    tools_version: str
+        Specifies utilized version of tool parameters. Can be set to "bese" or "alternative".
+        By default set to "base".
+        
     domain_radius: float, optional
         A radius of simulation domain in meters.
         By default set to 100.
@@ -271,6 +299,18 @@ def ComputeSyntheticLogs(tools_parameters, model_parameters, measurement_depths,
         os.makedirs("./tmp")
 
     ### Unpack parameters and prepare data
+    tools = {}
+    
+    for tool in tools_parameters.keys():
+        if tools_version=="base":
+            tools[tool] = tools_parameters[tool][0]
+        elif tools_version=="alternative":
+            tools[tool] = tools_parameters[tool][1]
+        else:
+            raise ValueError("The value of parameter tools_version can be set only to 'base' or 'alternative'")
+
+    tools_parameters = tools
+    
     formation_parameters = model_parameters[0]
     borehole_parameters = model_parameters[1]
     dip = model_parameters[2]*np.pi/180 #converted to radians
@@ -368,7 +408,7 @@ def ComputeSyntheticLogs(tools_parameters, model_parameters, measurement_depths,
 
     logs = dict()
     for i in range(len(tools_parameters.keys())):
-        logs[list(tools_parameters.keys())[i]] = results[:,i]
+        logs[list(tools_parameters.keys())[i]] = np.vstack([measurement_depths, results[:,i]]).T
 
     ### Shutdown MPI
     comm.Disconnect()
@@ -381,7 +421,8 @@ def ComputeSyntheticLogs(tools_parameters, model_parameters, measurement_depths,
 
     return logs
 
-def SaveResults(model_parameters, measurement_depths, measurement_results, output_folder, plot_layout="auto", depth_lim="auto", rad_lim="auto", res_lim="auto", aspect_ratio = "auto", at_nan="break", interpolation=1):
+
+def SaveResults(model_parameters, measurement_results, output_folder=None, measurement_to_save="auto", plot_layout="auto", depth_lim="auto", rad_lim="auto", res_lim="auto", model_res_lim="auto", aspect_ratio = "auto", at_nan="break", interpolation_factor=1, colors="auto"):
     """
     This function saves results of modelling to txt file and produces raw visualization of the model and computed syntetic logs that is saved in PNG format.
 
@@ -389,17 +430,18 @@ def SaveResults(model_parameters, measurement_depths, measurement_results, outpu
     -------
     model_parameters: list
         A list of numpy arrays created by the SetModelParameters() funcion.
-    
-    measurement_depths: array
-        A 1D numpy array of depths of simulated measurements.
-        Values have to be given in ascending order and corespond to depths of the model.
 
     measurement_results: dict
         A dictionary of 1D numpy arrays created by the ComputeSynteticLogs function.
-
+       
     output_folder: str
         A path to the folder where results will be saved.
-
+        By default set to None will only show results without saving them.
+    
+    measurement_to_save: str or list
+        A list of measurements to save to txt file.
+        By default set to "auto" will save all measurements.
+    
     plot_layout: list, optional
         a list of sublists of tool names. Each sublist consist of tool names assigned to certain track.
         By default set to "auto" will plot all logs on a sigle track.
@@ -427,25 +469,45 @@ def SaveResults(model_parameters, measurement_depths, measurement_results, outpu
         Specify if plot should be breaked or continued on Nan values.
         Available options: "break" and "continue".
         By default set to "break".
-    interpolation: float, optional
-        Allows to smooth logs on vizualization.
-        Have no inpact on output data.
+    
+    interpolation_factor: float, optional
+        Allows to smooth logs on vizualization. Have no inpact on output data.
         By default set to 1 (no interpolation).
 
     """
     
-    ### Create output folder
-    output_subfolder = os.path.join(output_folder, "Results_{}/".format(str(datetime.datetime.now().strftime("%Y_%m_%d__%H_%M_%S"))))
+    if output_folder!=None:
+        ### Create output folder
+        output_subfolder = os.path.join(output_folder, "Results_{}/".format(str(datetime.datetime.now().strftime("%Y_%m_%d__%H_%M_%S"))))
 
-    if not os.path.exists(output_subfolder):
-        os.makedirs(output_subfolder)
+        if not os.path.exists(output_subfolder):
+            os.makedirs(output_subfolder)
 
-    ### Save data to txt file
-    results = np.vstack([measurement_depths]+list(measurement_results.values())).T
-    names = ['DEPTH'] + list(measurement_results.keys())
-    units = ['M'] + ['OHMM']*len(list(measurement_results.keys()))
-    header = '\t'.join([name for name in names]) + '\n' + '\t'.join([unit for unit in units])
-    np.savetxt(output_subfolder + 'Results.txt', results,  fmt='%.4f', delimiter='\t', header=header, comments='')
+        ### Save data to txt files
+        if measurement_to_save=="auto":
+            measurement_to_save = list(measurement_results.keys())
+
+        logs_to_save = measurement_to_save.copy()
+        file_number = 1
+        while len(logs_to_save)>0:
+            logs = [logs_to_save[0]]
+            for i in range(1, len(logs_to_save)):
+                if np.shape(measurement_results[logs_to_save[0]][:,0])[0] == np.shape(measurement_results[logs_to_save[i]][:,0])[0]:
+                    if np.all(np.isclose(measurement_results[logs_to_save[0]][:,0], measurement_results[logs_to_save[i]][:,0]), axis=0)==True:
+                        logs.append(logs_to_save[i])
+
+            for log in logs:
+                logs_to_save.remove(log)
+
+            results = measurement_results[logs[0]]
+            for i in range(1, len(logs)):
+                results = np.hstack([results, np.atleast_2d(measurement_results[logs[i]][:,1]).T])
+
+            names = ['DEPTH'] + logs
+            units = ['M'] + ['OHMM']*len(logs)
+            header = '\t'.join([name for name in names]) + '\n' + '\t'.join([unit for unit in units])
+            np.savetxt(output_subfolder + 'Results_{}.txt'.format(file_number), results,  fmt='%.4f', delimiter='\t', header=header, comments='')
+            file_number += 1
 
     ### Formation model visualization
     
@@ -455,13 +517,12 @@ def SaveResults(model_parameters, measurement_depths, measurement_results, outpu
     dip = model_parameters[2]
 
     ## Smooth logs
-    if interpolation > 1:
-        measurement_depths_interp = np.linspace(np.min(measurement_depths), np.max(measurement_depths), int(np.shape(measurement_depths)[0]*interpolation))
+    if interpolation_factor > 1:
         logs = list(measurement_results.keys())
         for log in logs:
-            interpolation = spi.interp1d(measurement_depths, measurement_results[log], kind='cubic')
-            measurement_results[log] = interpolation(measurement_depths_interp)
-        measurement_depths = measurement_depths_interp
+            measurement_depths_interp = np.linspace(np.min(measurement_results[log][:,0]), np.max(measurement_results[log][:,0]), int(np.shape(measurement_results[log])[0]*interpolation_factor))
+            interpolation = spi.interp1d(measurement_results[log][:,0], measurement_results[log][:,1], kind='cubic')
+            measurement_results[log] = np.vstack([measurement_depths_interp, interpolation(measurement_depths_interp)]).T
 
     ## Prepare plot limits:
     if depth_lim == "auto":
@@ -515,12 +576,14 @@ def SaveResults(model_parameters, measurement_depths, measurement_results, outpu
     resistivities = np.ndarray.flatten(np.flip(formation_parameters[:,3:], axis=1))
 
     # Borehole
-    left_boundary = borehole_parameters[:,[1,0]]*[-1, 1]
-    right_boundary = borehole_parameters[:,[1,0]]
-    vetrices = np.vstack([left_boundary, np.flip(right_boundary, axis=0)])
-    polygon = Polygon(vetrices, closed=True)
-    patches.append(polygon)
-    resistivities = np.hstack([resistivities, np.mean(borehole_parameters[:,2])])
+    if borehole_parameters is not None:
+        left_boundary = borehole_parameters[:,[1,0]]*[-1, 1]
+        right_boundary = borehole_parameters[:,[1,0]]
+        vetrices = np.vstack([left_boundary, np.flip(right_boundary, axis=0)])
+        polygon = Polygon(vetrices, closed=True)
+        patches.append(polygon)
+        resistivities = np.hstack([resistivities, np.mean(borehole_parameters[:,2])])
+    borehole_axis = Line2D([0, 0], depth_lim, color='black')
 
     ## Plot model and logs
     if plot_layout=="auto":
@@ -534,14 +597,17 @@ def SaveResults(model_parameters, measurement_depths, measurement_results, outpu
     resistivities = resistivities[~np.isnan(resistivities)]
     collection = PatchCollection(patches, cmap=matplotlib.cm.viridis)
     collection.set_array(resistivities)
-    
-    colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
+
+    if model_res_lim!="auto":
+        collection.set_clim(model_res_lim)
+        
     plt.rcParams.update({'font.size': 14, 'axes.labelsize': 14, 'axes.titlesize': 14, 'xtick.labelsize': 14, 'ytick.labelsize': 14, 'axes.titlepad': 14,
         "xtick.major.size": 10, "xtick.minor.size": 5, "ytick.major.size": 10, "ytick.minor.size": 5})
 
-    fig, ax = plt.subplots(1, 1+tracks, sharey=True, figsize=[fig_width, fig_hight])
+    fig, ax = plt.subplots(1, 1+tracks, sharey=True, figsize=[fig_width, fig_hight], facecolor="white")
     
     ax[0].add_collection(collection)
+    ax[0].add_line(borehole_axis)
     ax[0].margins(x=0, y=0)
     ax[0].set_xlim(rad_lim)
     ax[0].set_ylim(depth_lim)
@@ -558,6 +624,11 @@ def SaveResults(model_parameters, measurement_depths, measurement_results, outpu
     ax[0].autoscale_view()
     
     for track in range(1, tracks+1):
+            
+        if colors=="auto":
+            track_colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
+        else:
+            track_colors = colors[track-1]
         if plot_layout=="auto":
             logs = list(measurement_results.keys())
         else:
@@ -568,17 +639,17 @@ def SaveResults(model_parameters, measurement_depths, measurement_results, outpu
             else:
                 axis = ax[track].twiny()
             if at_nan=="break":
-                axis.plot(measurement_results[logs[i]], measurement_depths, color=colors[i%len(colors)])
+                axis.plot(measurement_results[logs[i]][:,1], measurement_results[logs[i]][:,0], color=track_colors[i]) ### ZMIANA NA OSTATNIĄ CHWILĘ color=track_colors[i%len(colors)]
             elif at_nan=="continue":
-                nan_flag = ~np.isnan(measurement_results[logs[i]])
-                axis.plot(measurement_results[logs[i]][nan_flag], measurement_depths[nan_flag], color=colors[i%len(colors)])
+                nan_flag = ~np.isnan(measurement_results[logs[i]][:,1])
+                axis.plot(measurement_results[logs[i]][nan_flag,1], measurement_results[logs[i]][nan_flag,0], color=track_colors[i]) ### ZMIANA NA OSTATNIĄ CHWILĘ color=track_colors[i%len(colors)]
             else:
                 raise ValueError('at_nan paramater has to be set to "break" or "continue"')
-            axis.set_xlabel(logs[i]+"\n[ohmm]", color=colors[i%len(colors)], labelpad=-8)
-            axis.spines['top'].set_color(colors[i%len(colors)])
+            axis.set_xlabel(logs[i]+"\n[ohmm]", color=track_colors[i%len(track_colors)], labelpad=-8)
+            axis.spines['top'].set_color(track_colors[i%len(track_colors)])
             axis.spines['top'].set_position(('outward', i*55+10))
             axis.set_xticks(res_lim)
-            axis.tick_params(axis='x', color=colors[i%len(colors)])
+            axis.tick_params(axis='x', color=track_colors[i%len(track_colors)])
             axis.set_xlim(res_lim)
         axis = ax[track].twiny().get_xaxis().set_visible(False)
     for track in range(1, tracks+1):
@@ -588,11 +659,12 @@ def SaveResults(model_parameters, measurement_depths, measurement_results, outpu
         ax[track].margins(x=0, y=0)
         ax[track].autoscale_view()
             
-    colorbar = fig.colorbar(collection, ax=ax, location='bottom', orientation='horizontal', pad=0.05, label="Resistivity [ohmm]")
+    colorbar = fig.colorbar(collection, ax=ax, location='bottom', orientation='horizontal', pad=0.05, label="Resistivity [ohmm]", shrink=min([1, aspect_ratio]))
     colorbar.ax.minorticks_on()
 
     ## Save plot to png file
-    plt.savefig(output_subfolder + 'Results_plot.png', bbox_inches='tight')
+    if output_folder!=None:
+        plt.savefig(output_subfolder + 'Results_plot.png', bbox_inches='tight')
 
 
 ## Helper functions utilized in main funcions and workers
@@ -996,11 +1068,13 @@ def ConstructGmsh2dModel(domain_radius, tool_geometry, source_terms, formation_g
 
     ## Points at borehole axis (bottom -> top)
     gmsh.model.occ.addPoint(0, domain_radius, 0, tag=2)
-    for i in range(3,6):
-        gmsh.model.occ.addPoint(0, np.flip(tool_geometry)[i-3], 0, tag=i)
-    gmsh.model.occ.addPoint(0, -domain_radius, 0, tag=6)
-    points_at_borehole_axis = [2,3,4,5,6]
-    index_0D = 7
+    index_0D = 3
+    for i in range(np.shape(tool_geometry)[0]):
+        gmsh.model.occ.addPoint(0, np.flip(tool_geometry)[i], 0, tag=index_0D)
+        index_0D +=1
+    gmsh.model.occ.addPoint(0, -domain_radius, 0, tag=index_0D)
+    index_0D +=1
+    points_at_borehole_axis = list(np.arange(2, index_0D))
 
     ## Points at borehole boundary (top -> bottom)
     points_at_borehole_boundary = []
@@ -1411,9 +1485,10 @@ def ConstructNetgen2dModel(domain_radius, tool_geometry, formation_geometry, bor
     ### Add points [index, r, z]
 
     ## Add points at borehole axis
-    points_at_borehole_axis = np.vstack([np.arange(5) + index_0D, np.zeros(5), np.hstack([-domain_radius, tool_geometry, domain_radius])]).T
+    n_electrodes = np.shape(tool_geometry)[0]
+    points_at_borehole_axis = np.vstack([np.arange(n_electrodes+2) + index_0D, np.zeros(n_electrodes+2), np.hstack([-domain_radius, tool_geometry, domain_radius])]).T
     points = points_at_borehole_axis
-    index_0D += 5
+    index_0D += n_electrodes+2
 
     ## Add points at borehole/rock interface
     # Calculate intersections of boundaries with the borehole wall
@@ -1652,3 +1727,179 @@ def SolveBVP(mesh, sigma, tool_geometry, source_terms, dirichlet_boundary, preco
         gfu.vec.data += a.inner_solve * f.vec
 
     return(fes, gfu)
+
+
+
+### Work in progress versions
+
+def ComputeSyntheticLogs_v2(tools_parameters, model_parameters, measurement_depths, tools_version="base", domain_radius=50, processes=4, mesh_generator="gmsh", preconditioner="multigrid", condense=True):
+
+    def prepare_tasks(tools_parameters, measurement_depths):
+
+        current_electrode_depths = {}
+        for tool in tools_parameters.keys():
+            current_electrode_depths[tool] = measurement_depths + tools_parameters[tool][1,3] 
+        simulation_depths = np.unique(np.hstack(list(current_electrode_depths.values())))
+
+        tasks = []
+        for simulation_depth_index in range(len(simulation_depths)):
+
+            simulation_depth = simulation_depths[simulation_depth_index]
+            modelling_tasks = []
+            potential_electodes_depths = []
+            for tool_index in range(len(list(tools_parameters.keys()))):
+                tool = list(tools_parameters.keys())[tool_index]
+                if np.any(np.isclose(current_electrode_depths[tool], simulation_depth)):
+                    measurement_depth_index = np.argwhere(np.isclose(measurement_depths + tools_parameters[tool][1,3], simulation_depth))[0][0]
+                    modelling_tasks.append([measurement_depth_index, tool_index])
+                    tool_electrodes = tools_parameters[tool][:,:3].copy() 
+                    tool_electrodes[0,:] -= tools_parameters[tool][1,3] 
+                    potential_electodes_depths += list(tool_electrodes[0, tool_electrodes[1,:]==0])
+
+
+            unique_potential_electodes_depths = np.unique(potential_electodes_depths)
+            combined_tools = np.zeros((2, len(unique_potential_electodes_depths)+1))
+            combined_tools[1,0] = 1
+            combined_tools[0,1:] = unique_potential_electodes_depths
+            combined_tools = combined_tools[:,combined_tools[0,:].argsort()]
+            
+            tasks.append([simulation_depth_index, combined_tools, modelling_tasks])
+
+        return simulation_depths, tasks
+    
+
+    ### Start the clock
+    start_time = datetime.datetime.now()
+
+    ### Create temporary directory for mesh files
+    if not os.path.exists("./tmp"):
+        os.makedirs("./tmp")
+
+    ### Unpack parameters and prepare data
+    tools = {}
+    
+    for tool in tools_parameters.keys():
+        if tools_version=="base":
+            tools[tool] = tools_parameters[tool][0]
+        elif tools_version=="alternative":
+            tools[tool] = tools_parameters[tool][1]
+        else:
+            raise ValueError("The value of parameter tools_version can be set only to 'base' or 'alternative'")
+
+    tools_parameters = tools
+    
+    formation_parameters = model_parameters[0]
+    borehole_parameters = model_parameters[1]
+    dip = model_parameters[2]*np.pi/180 #converted to radians
+
+    #simulation_depths = dict()
+    domain_radius_alert = False
+    for tool in tools_parameters.keys():
+        tools_parameters[tool][0,:3] -= tools_parameters[tool][1,3] # center simulation around current electrodes
+        #simulation_depths[tool] = measurement_depths + tools_parameters[tool][1,3]
+        if np.max(np.abs(tools_parameters[tool][0,:3])) > domain_radius:
+            raise ValueError("Some electrodes are locate outside the simulation domain. Domain size have to be increased")
+        elif np.max(np.abs(tools_parameters[tool][0,:3])) > 0.75*domain_radius:
+            domain_radius_alert = True
+    if domain_radius_alert == True:
+        print("Some electrodes are located close to the boundary of the simulation domain. This may cause problems during simulation. Consider increase of the domain size")
+    
+    if dip!=0 and mesh_generator!="gmsh":
+        raise ValueError("The only mesh generator supported in 3D models is gmsh")
+    
+    #print(simulation_depths)
+    # Create dense borehole geometry for the purpose of 3D mesh generation (necessary to avoid errors during meshing procedure)
+    if dip!=0:
+        borehole_parameters = AddPointsToBorehole(borehole_parameters, 0.15)
+
+    borehole_geometry = np.ascontiguousarray(borehole_parameters[:,:2])
+
+    ### Parallel FEM computation
+    
+    ## Compute simulation depths and prepare tasks
+    simulation_depths, task_list = prepare_tasks(tools_parameters, measurement_depths)
+    n_tasks = len(task_list)
+    
+    mud_resistivities = np.interp(simulation_depths, borehole_parameters[:,0], borehole_parameters[:,2])
+
+    ## Specify number of workers
+    
+    if type(processes) != int:
+        raise ValueError("The number of processes have to be intager")
+    if processes < 2:
+        raise ValueError("Minimal number of processes is 2")
+    
+    n_workers = processes - 1 # one process is reserved for the master, the rest for the workers
+    
+    ## Spawn workers
+    comm = MPI.COMM_WORLD.Spawn(
+        sys.executable,
+        args=[os.path.join(os.path.dirname(os.path.abspath(__file__)), 'worker_v2.py')], 
+        maxprocs=n_workers)
+
+    ## Broadcast data to workers
+    # Broadcast information about shapes of broadcasted arrays
+    arrays_shape = [np.shape(formation_parameters), np.shape(borehole_geometry), np.shape(mud_resistivities)]
+    comm.bcast(arrays_shape, root=MPI.ROOT)
+
+    # Broadcast data
+    comm.Bcast([formation_parameters, MPI.FLOAT], root=MPI.ROOT)
+    comm.Bcast([borehole_geometry, MPI.FLOAT], root=MPI.ROOT)
+    comm.Bcast([mud_resistivities, MPI.FLOAT], root=MPI.ROOT)
+    comm.bcast(dip, root=MPI.ROOT)
+    comm.bcast(tools_parameters, root=MPI.ROOT)
+    comm.bcast(simulation_depths, root=MPI.ROOT)
+    comm.bcast(domain_radius, root=MPI.ROOT)
+    comm.bcast(mesh_generator, root=MPI.ROOT)
+    comm.bcast(preconditioner, root=MPI.ROOT)
+    comm.bcast(condense, root=MPI.ROOT)
+
+    ## Wait for all workers to receive data
+    comm.barrier()
+
+    ## Convert tasks to mesages 
+    # task_list = []   
+    tool_list = list(range(len(tools_parameters.keys())))
+    measurement_depths_list = list(range(len(measurement_depths)))
+    # for task in itertools.product(measurement_depths_list, tool_list):
+    #     task_list.append(list(task))
+    msg_list = task_list + ([StopIteration] * n_workers) # Append stop sentinel for each worker
+
+    ## Dispatch tasks to workers
+    status = MPI.Status()
+    for i in msg_list:
+        if i != StopIteration:
+            # Pass data to worker
+            comm.recv(source=MPI.ANY_SOURCE, status=status)
+            comm.send(obj=i, dest=status.Get_source())
+            # Progress bar
+            percent = ((i[0] + 1) * 100) // (n_tasks)
+            sys.stdout.write('\rProgress: [%-50s] %3i%% ' % ('=' * (percent // 2), percent))
+            sys.stdout.flush()
+        else:
+            # Tell worker to shutdown
+            comm.recv(source=MPI.ANY_SOURCE, status=status)
+            comm.send(obj=i, dest=status.Get_source())
+
+    # Gather results from workers
+    list_of_results = [item for sublist in comm.gather(None, root=MPI.ROOT) for item in sublist]
+   
+    ## Format and sort results
+    results = np.empty([len(measurement_depths_list), len(tool_list)])
+    for result in list_of_results:
+        results[result[0], result[1]] = result[2]
+
+    logs = dict()
+    for i in range(len(tools_parameters.keys())):
+        logs[list(tools_parameters.keys())[i]] = np.vstack([measurement_depths, results[:,i]]).T
+
+    ### Shutdown MPI
+    comm.Disconnect()
+
+    ### Remove tmp folder with and mesh files
+    shutil.rmtree("./tmp")
+
+    ## Report time of computation
+    print('\nProcessed in: ', datetime.datetime.now() - start_time)
+
+    return logs
