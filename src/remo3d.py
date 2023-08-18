@@ -1464,7 +1464,7 @@ def SelectNetgenDataRange(borehole_geometry, formation_parameters, mud_resistivi
 def ConstructNetgen2dModel(domain_radius, tool_geometry, formation_geometry, borehole_geometry, source_terms):
 
     mesh_size_min = 0.001
-    mesh_size_max = 100
+    mesh_size_max = 10
     mesh_density = "moderate"
 
     index_0D = 0 # points
@@ -1725,35 +1725,53 @@ def SolveBVP(mesh, sigma, tool_geometry, source_terms, dirichlet_boundary, preco
 
 def ComputeSyntheticLogs_v2(tools_parameters, model_parameters, measurement_depths, force_single_electrode_configuration=False, domain_radius=50, processes=4, mesh_generator="gmsh", preconditioner="multigrid", condense=True):
 
-    def prepare_simulation_depths_and_tasks(tools_parameters, measurement_depths):
+    def prepare_simulation_depths_and_tasks(tools_parameters, measurement_depths, single_electrode_computation_mode):
 
         current_electrode_depths = {}
         for tool in tools_parameters.keys():
             current_electrode_depths[tool] = measurement_depths + tools_parameters[tool][1,3] 
         simulation_depths = np.unique(np.hstack(list(current_electrode_depths.values())))
 
-        tasks = []
-        for simulation_depth_index in range(len(simulation_depths)):
+        if single_electrode_computation_mode==True:
+            tasks = []
+            for simulation_depth_index in range(len(simulation_depths)):
 
-            simulation_depth = simulation_depths[simulation_depth_index]
-            modelling_tasks = []
-            potential_electodes_depths = []
+                simulation_depth = simulation_depths[simulation_depth_index]
+                modelling_tasks = []
+                potential_electodes_depths = []
+                for tool_index in range(len(list(tools_parameters.keys()))):
+                    tool = list(tools_parameters.keys())[tool_index]
+                    if np.any(np.isclose(current_electrode_depths[tool], simulation_depth)):
+                        measurement_depth_index = np.argwhere(np.isclose(measurement_depths + tools_parameters[tool][1,3], simulation_depth))[0][0]
+                        modelling_tasks.append([measurement_depth_index, tool_index])
+                        tool_electrodes = tools_parameters[tool][:,:3].copy() 
+                        tool_electrodes[0,:] -= tools_parameters[tool][1,3] 
+                        potential_electodes_depths += list(tool_electrodes[0, tool_electrodes[1,:]==0])
+
+                unique_potential_electodes_depths = np.unique(potential_electodes_depths)
+                combined_tools = np.zeros((2, len(unique_potential_electodes_depths)+1))
+                combined_tools[1,0] = 1
+                combined_tools[0,1:] = unique_potential_electodes_depths
+                combined_tools = combined_tools[:,combined_tools[0,:].argsort()]
+                print(combined_tools)
+
+                tasks.append([simulation_depth_index, combined_tools, modelling_tasks])
+                
+        elif single_electrode_computation_mode==False:
+            tool_list = list(range(len(tools_parameters.keys())))
+
+            tasks = [] 
             for tool_index in range(len(list(tools_parameters.keys()))):
                 tool = list(tools_parameters.keys())[tool_index]
-                if np.any(np.isclose(current_electrode_depths[tool], simulation_depth)):
-                    measurement_depth_index = np.argwhere(np.isclose(measurement_depths + tools_parameters[tool][1,3], simulation_depth))[0][0]
-                    modelling_tasks.append([measurement_depth_index, tool_index])
-                    tool_electrodes = tools_parameters[tool][:,:3].copy() 
-                    tool_electrodes[0,:] -= tools_parameters[tool][1,3] 
-                    potential_electodes_depths += list(tool_electrodes[0, tool_electrodes[1,:]==0])
-
-            unique_potential_electodes_depths = np.unique(potential_electodes_depths)
-            combined_tools = np.zeros((2, len(unique_potential_electodes_depths)+1))
-            combined_tools[1,0] = 1
-            combined_tools[0,1:] = unique_potential_electodes_depths
-            combined_tools = combined_tools[:,combined_tools[0,:].argsort()]
-            
-            tasks.append([simulation_depth_index, combined_tools, modelling_tasks])
+                for measurement_depth_index in range(len(current_electrode_depths[tool])):
+                    depth =  current_electrode_depths[tool][measurement_depth_index]
+                    simulation_depth_index = np.argwhere(np.isclose(simulation_depths, depth))[0][0]
+                    tasks.append([simulation_depth_index, [measurement_depth_index, tool_index]])
+                    #print([simulation_depth_index, None, [measurement_depth_index, tool_index]])
+            #     simulation_depths[tool] = measurement_depths + tools_parameters[tool][1,3]
+            # tasks = []   
+            # for task in itertools.product(measurement_depths_list, tool_list):
+            #     tasks.append(list(task))            
 
         return simulation_depths, tasks
     
@@ -1818,24 +1836,22 @@ def ComputeSyntheticLogs_v2(tools_parameters, model_parameters, measurement_dept
     measurement_depths_list = list(range(len(measurement_depths)))
 
     ## Compute simulation depths and prepare tasks
-    if single_electrode_computation_mode==False:
-        simulation_depths = dict()
-        for tool in tools_parameters.keys():
-            simulation_depths[tool] = measurement_depths + tools_parameters[tool][1,3]
-        task_list = []   
-        for task in itertools.product(measurement_depths_list, tool_list):
-            task_list.append(list(task))
-        n_tasks = np.shape(measurement_depths)[0]
+#     if single_electrode_computation_mode==False:
+#         simulation_depths = dict()
+#         for tool in tools_parameters.keys():
+#             simulation_depths[tool] = measurement_depths + tools_parameters[tool][1,3]
+#         task_list = []   
+#         for task in itertools.product(measurement_depths_list, tool_list):
+#             task_list.append(list(task))
+#     elif single_electrode_computation_mode==True:
+#         simulation_depths, task_list = prepare_simulation_depths_and_tasks(tools_parameters, measurement_depths)
         
-    elif single_electrode_computation_mode==True:
-        simulation_depths, task_list = prepare_simulation_depths_and_tasks(tools_parameters, measurement_depths)
-        n_tasks = len(task_list)
+    simulation_depths, task_list = prepare_simulation_depths_and_tasks(tools_parameters, measurement_depths, single_electrode_computation_mode)
+    
+    n_tasks = len(task_list)
 
     # Mud resistivities at simulation depths
-    if single_electrode_computation_mode==False:
-        mud_resistivities = np.interp(measurement_depths, borehole_parameters[:,0], borehole_parameters[:,2])   
-    elif single_electrode_computation_mode==True:
-        mud_resistivities = np.interp(simulation_depths, borehole_parameters[:,0], borehole_parameters[:,2])
+    mud_resistivities = np.interp(simulation_depths, borehole_parameters[:,0], borehole_parameters[:,2])
     
     ## Specify number of workers
     if type(processes) != int:
@@ -1846,16 +1862,215 @@ def ComputeSyntheticLogs_v2(tools_parameters, model_parameters, measurement_dept
     n_workers = processes - 1 # one process is reserved for the main
     
     ## Spawn workers
+    comm = MPI.COMM_WORLD.Spawn(
+            sys.executable,
+            args=[os.path.join(os.path.dirname(os.path.abspath(__file__)), 'worker_v2.py')], 
+            maxprocs=n_workers)
+    # if single_electrode_computation_mode==False:
+    #     comm = MPI.COMM_WORLD.Spawn(
+    #         sys.executable,
+    #         args=[os.path.join(os.path.dirname(os.path.abspath(__file__)), 'worker.py')], 
+    #         maxprocs=n_workers)        
+    # elif single_electrode_computation_mode==True:
+    #     comm = MPI.COMM_WORLD.Spawn(
+    #         sys.executable,
+    #         args=[os.path.join(os.path.dirname(os.path.abspath(__file__)), 'worker_v2.py')], 
+    #         maxprocs=n_workers)
+
+    ## Broadcast data to workers
+    # Broadcast information about shapes of broadcasted arrays
+    arrays_shape = [np.shape(formation_parameters), np.shape(borehole_geometry), np.shape(mud_resistivities)]
+    comm.bcast(arrays_shape, root=MPI.ROOT)
+
+    # Broadcast data
+    comm.Bcast([formation_parameters, MPI.FLOAT], root=MPI.ROOT)
+    comm.Bcast([borehole_geometry, MPI.FLOAT], root=MPI.ROOT)
+    comm.Bcast([mud_resistivities, MPI.FLOAT], root=MPI.ROOT)
+    comm.bcast(dip, root=MPI.ROOT)
+    comm.bcast(tools_parameters, root=MPI.ROOT)
+    comm.bcast(simulation_depths, root=MPI.ROOT)
+    comm.bcast(domain_radius, root=MPI.ROOT)
+    comm.bcast(mesh_generator, root=MPI.ROOT)
+    comm.bcast(preconditioner, root=MPI.ROOT)
+    comm.bcast(condense, root=MPI.ROOT)
+
+    ## Wait for all workers to receive data
+    comm.barrier()
+
+    ## Convert tasks to mesages 
+    print("{} simulation tasks prepared".format(n_tasks))
+    msg_list = task_list + ([StopIteration] * n_workers) # Append stop sentinel for each worker
+
+    ## Dispatch tasks to workers
+    status = MPI.Status()
+    i = 0
+    for msg in msg_list:
+        if msg != StopIteration:
+            i += 1
+            # Pass data to worker
+            comm.recv(source=MPI.ANY_SOURCE, status=status)
+            comm.send(obj=msg, dest=status.Get_source())
+            # Progress bar
+            percent = ((i) * 100) // (n_tasks)
+            sys.stdout.write('\rProgress: [%-50s] %3i%% ' % ('=' * (percent // 2), percent))
+            sys.stdout.flush()
+            
+        else:
+            # Tell worker to shutdown
+            comm.recv(source=MPI.ANY_SOURCE, status=status)
+            comm.send(obj=msg, dest=status.Get_source())
+
+    # Gather results from workers
+    list_of_results = [item for sublist in comm.gather(None, root=MPI.ROOT) for item in sublist]
+   
+    ## Format and sort results
+    results = np.empty([len(measurement_depths_list), len(tool_list)])
+    for result in list_of_results:
+        results[result[0], result[1]] = result[2]
+
+    logs = dict()
+    for i in range(len(tools_parameters.keys())):
+        logs[list(tools_parameters.keys())[i]] = np.vstack([measurement_depths, results[:,i]]).T
+
+    ### Shutdown MPI
+    comm.Disconnect()
+
+    ### Remove tmp folder and mesh files
+    shutil.rmtree("./tmp")
+
+    ## Report time of computation
+    print('\nProcessed in: ', datetime.datetime.now() - start_time)
+
+    return logs
+
+
+
+
+
+def ComputeSyntheticLogs_v3(tools_parameters, model_parameters, measurement_depths, force_single_electrode_configuration=True, domain_radius=50, processes=4, mesh_generator="gmsh", preconditioner="multigrid", condense=True):
+
+    def prepare_simulation_depths_and_tasks(tools_parameters, measurement_depths, single_electrode_computation_mode):
+
+        current_electrode_depths = {}
+        for tool in tools_parameters.keys():
+            current_electrode_depths[tool] = measurement_depths + tools_parameters[tool][1,3] 
+        simulation_depths = np.unique(np.hstack(list(current_electrode_depths.values())))
+
+        if single_electrode_computation_mode==True:
+            tasks = []
+            for simulation_depth_index in range(len(simulation_depths)):
+
+                simulation_depth = simulation_depths[simulation_depth_index]
+                modelling_tasks = []
+                potential_electodes_depths = []
+                for tool_index in range(len(list(tools_parameters.keys()))):
+                    tool = list(tools_parameters.keys())[tool_index]
+                    if np.any(np.isclose(current_electrode_depths[tool], simulation_depth)):
+                        measurement_depth_index = np.argwhere(np.isclose(measurement_depths + tools_parameters[tool][1,3], simulation_depth))[0][0]
+                        modelling_tasks.append([measurement_depth_index, tool_index])
+                        tool_electrodes = tools_parameters[tool][:,:3].copy() 
+                        tool_electrodes[0,:] -= tools_parameters[tool][1,3] 
+                        potential_electodes_depths += list(tool_electrodes[0, tool_electrodes[1,:]==0])
+
+                unique_potential_electodes_depths = np.unique(potential_electodes_depths)
+                combined_tools = np.zeros((2, len(unique_potential_electodes_depths)+1))
+                combined_tools[1,0] = 1
+                combined_tools[0,1:] = unique_potential_electodes_depths
+                combined_tools = combined_tools[:,combined_tools[0,:].argsort()]
+                tasks.append([simulation_depth_index, combined_tools, modelling_tasks])
+                
+        elif single_electrode_computation_mode==False:
+            tool_list = list(range(len(tools_parameters.keys())))
+            tasks = [] 
+            for tool_index in range(len(list(tools_parameters.keys()))):
+                tool = list(tools_parameters.keys())[tool_index]
+                for measurement_depth_index in range(len(current_electrode_depths[tool])):
+                    depth =  current_electrode_depths[tool][measurement_depth_index]
+                    simulation_depth_index = np.argwhere(np.isclose(simulation_depths, depth))[0][0]
+                    tasks.append([simulation_depth_index, tools_parameters[tool][:,:3], [[measurement_depth_index, tool_index]]])
+
+        return simulation_depths, tasks
     
-    if single_electrode_computation_mode==False:
-        comm = MPI.COMM_WORLD.Spawn(
+
+    ### Start the clock
+    start_time = datetime.datetime.now()
+
+    ### Create temporary directory for mesh files
+    if not os.path.exists("./tmp"):
+        os.makedirs("./tmp")
+
+    ### Unpack parameters and prepare data
+    ## Tools
+    # Convert tools to single-electrode configurations
+    if force_single_electrode_configuration==False:
+        pass
+    elif force_single_electrode_configuration==True:
+        for tool in tools_parameters.keys():
+            if "A" in tool and "B" in tool:
+                alternative_tool = tool.translate(str.maketrans("ABMN", "MNAB"))
+                alternative_tool_data = [str2float(item) for item in [''.join(group) for _, group in itertools.groupby(alternative_tool, str.isalpha)]]
+                alternative_electrodes = tuple(x for x in alternative_tool_data if isinstance(x, str)) # symbols of eletrodes
+                alternative_distances = [x for x in alternative_tool_data if isinstance(x, float)] # distances between electrodes
+                tools_parameters[tool] = SetToolParameters(alternative_tool, alternative_electrodes, alternative_distances)
+    else:
+        raise ValueError("The value of parameter force_single_electrode_configuration can be set only to True or False")
+    
+    # Check if all tools are in single-electode configuration
+    single_electrode_computation_mode = True
+    for tool in tools_parameters.keys():
+        if np.isclose(np.sum(tools_parameters[tool][1,:3]), 0)==True:
+            single_electrode_computation_mode = False
+            
+    ## Model
+    formation_parameters = model_parameters[0]
+    borehole_parameters = model_parameters[1]
+    dip = model_parameters[2]*np.pi/180 #converted to radians
+   
+    ## Simulation domain
+    domain_radius_alert = False
+    for tool in tools_parameters.keys():
+        tools_parameters[tool][0,:3] -= tools_parameters[tool][1,3] # center simulation around current electrodes
+        if np.max(np.abs(tools_parameters[tool][0,:3])) > domain_radius:
+            raise ValueError("Some electrodes are locate outside the simulation domain. Domain size have to be increased")
+        elif np.max(np.abs(tools_parameters[tool][0,:3])) > 0.75*domain_radius:
+            domain_radius_alert = True
+    if domain_radius_alert == True:
+        print("Some electrodes are located close to the boundary of the simulation domain. This may cause problems during simulation. Consider increase of the domain size")
+    
+    if dip!=0 and mesh_generator!="gmsh":
+        raise ValueError("The only mesh generator supported in 3D models is gmsh")
+    
+    # Create dense borehole geometry for the purpose of 3D mesh generation (necessary to avoid errors during meshing procedure)
+    if dip!=0:
+        borehole_parameters = AddPointsToBorehole(borehole_parameters, 0.15)
+
+    borehole_geometry = np.ascontiguousarray(borehole_parameters[:,:2])
+
+    ### Parallel FEM computation
+    
+    tool_list = list(range(len(tools_parameters.keys())))
+    measurement_depths_list = list(range(len(measurement_depths)))
+
+    ## Compute simulation depths and prepare tasks
+    simulation_depths, task_list = prepare_simulation_depths_and_tasks(tools_parameters, measurement_depths, single_electrode_computation_mode)
+    
+    n_tasks = len(task_list)
+
+    # Mud resistivities at simulation depths
+    mud_resistivities = np.interp(simulation_depths, borehole_parameters[:,0], borehole_parameters[:,2])
+    
+    ## Specify number of workers
+    if type(processes) != int:
+        raise ValueError("The number of processes have to be intager")
+    if processes < 2:
+        raise ValueError("Minimal number of processes is 2")
+    
+    n_workers = processes - 1 # one process is reserved for the main
+    
+    ## Spawn workers
+    comm = MPI.COMM_WORLD.Spawn(
             sys.executable,
-            args=[os.path.join(os.path.dirname(os.path.abspath(__file__)), 'worker.py')], 
-            maxprocs=n_workers)        
-    elif single_electrode_computation_mode==True:
-        comm = MPI.COMM_WORLD.Spawn(
-            sys.executable,
-            args=[os.path.join(os.path.dirname(os.path.abspath(__file__)), 'worker_se.py')], 
+            args=[os.path.join(os.path.dirname(os.path.abspath(__file__)), 'worker_v3.py')], 
             maxprocs=n_workers)
 
     ## Broadcast data to workers
@@ -1879,23 +2094,27 @@ def ComputeSyntheticLogs_v2(tools_parameters, model_parameters, measurement_dept
     comm.barrier()
 
     ## Convert tasks to mesages 
+    print("{} simulation tasks prepared".format(n_tasks))
     msg_list = task_list + ([StopIteration] * n_workers) # Append stop sentinel for each worker
 
     ## Dispatch tasks to workers
     status = MPI.Status()
-    for i in msg_list:
-        if i != StopIteration:
+    i = 0
+    for msg in msg_list:
+        if msg != StopIteration:
+            i += 1
             # Pass data to worker
             comm.recv(source=MPI.ANY_SOURCE, status=status)
-            comm.send(obj=i, dest=status.Get_source())
+            comm.send(obj=msg, dest=status.Get_source())
             # Progress bar
-            percent = ((i[0] + 1) * 100) // (n_tasks)
+            percent = ((i) * 100) // (n_tasks)
             sys.stdout.write('\rProgress: [%-50s] %3i%% ' % ('=' * (percent // 2), percent))
             sys.stdout.flush()
+            
         else:
             # Tell worker to shutdown
             comm.recv(source=MPI.ANY_SOURCE, status=status)
-            comm.send(obj=i, dest=status.Get_source())
+            comm.send(obj=msg, dest=status.Get_source())
 
     # Gather results from workers
     list_of_results = [item for sublist in comm.gather(None, root=MPI.ROOT) for item in sublist]
