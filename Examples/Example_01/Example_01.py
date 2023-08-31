@@ -27,4 +27,5 @@ logs = rm.ComputeSyntheticLogs(tools_parameters, model_parameters, measurement_d
 
 # Save results
 output_folder = "./Output" # path to output folder
-rm.SaveResults(model_parameters, measurement_depths, logs, output_folder)
+rm.SaveResults(model_parameters, logs, output_folder=output_folder)
+

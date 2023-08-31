@@ -21,15 +21,17 @@ tools_parameters = rm.SetToolsParameters(tools)
 
 # Set model parameters
 model_parameters = rm.SetModelParameters(formation_model_file, borehole_model_file,
-   borehole_geometry='diameter', dip=0)
+                                         borehole_geometry='diameter', dip=0)
 
 # Compute synthetic logs
 logs = rm.ComputeSyntheticLogs(tools_parameters, model_parameters, measurement_depths,
-   domain_radius=50, processes=12, mesh_generator="netgen")
+                               domain_radius=50, processes=12, mesh_generator="netgen")
 
 # Save results
 output_folder = "./Output" # path to output folder
- 
-rm.SaveResults(model_parameters, measurement_depths, logs, output_folder,
-   plot_layout=[["B5.7A0.4M", "B4.48A1.62M"], ["M1.0A0.1B", "A2.0M0.5N", "N0.5M2.0A", "M4.0A0.5B"]],
-   depth_lim=[0,25], rad_lim=[-1,1], res_lim=[0,30], aspect_ratio=1.25, at_nan="continue")
+rm.SaveResults(model_parameters, logs, output_folder=output_folder,
+               plot_layout=[["B5.7A0.4M", "B4.48A1.62M"], ["M1.0A0.1B", "A2.0M0.5N", "N0.5M2.0A", "M4.0A0.5B"]],
+               plot_depth_lim=[0, 25], plot_aspect_ratio=1.25,
+               model_rad_lim=[-1, 1], model_res_lim=[0, 20],
+               logs_colours = [["red", "blue"], ["green", "orange", "purple", "deepskyblue"]],
+               logs_res_lim=[0, 30], logs_at_nan="continue")
