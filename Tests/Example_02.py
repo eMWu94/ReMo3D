@@ -7,7 +7,16 @@
    mpiexec python3 Example_02.py
 """
 
-import remo3d as rm
+# import remo3d as rm
+# import numpy as np
+
+import sys
+import os
+
+module_path = os.path.abspath(os.path.join('..'))
+sys.path.append(module_path)
+
+import src.remo3d as rm
 import numpy as np
 
 # Specify input data

@@ -7,7 +7,15 @@
    mpiexec python3 Example_01.py
 """
 
-import remo3d as rm
+# import remo3d as rm
+# import numpy as np
+
+import sys
+import os
+module_path = os.path.abspath(os.path.join('..'))
+sys.path.append(module_path)
+
+import src.remo3d as rm
 import numpy as np
 
 # Specify input data
@@ -28,4 +36,3 @@ logs = rm.ComputeSyntheticLogs(tools_parameters, model_parameters, measurement_d
 # Save results
 output_folder = "./Output" # path to output folder
 rm.SaveResults(model_parameters, logs, output_folder=output_folder)
-

@@ -66,7 +66,7 @@ def SetToolsParameters(tools):
 
 def SetModelParameters(formation_model_file, borehole_model_file, borehole_geometry='diameter', dip=0):
     """
-    This function import formation and borehole parameters from txt files
+    This function imports formation and borehole parameters from txt files
     and checks if they are correct.
 
     Parameters
@@ -147,7 +147,8 @@ def SetModelParameters(formation_model_file, borehole_model_file, borehole_geome
     model_parameters = [formation_parameters, borehole_parameters, dip]
     return model_parameters
 
-def ComputeSyntheticLogs(tools_parameters, model_parameters, measurement_depths, force_single_electrode_configuration=False, domain_radius=50, processes=4, mesh_generator="gmsh", preconditioner="multigrid", condense=True):
+
+def ComputeSyntheticLogs(tools_parameters, model_parameters, measurement_depths, force_single_electrode_configuration=True, domain_radius=50, processes=4, mesh_generator="auto", preconditioner="multigrid", condense=True):
     """
     This function computes syntetic logs.
 
@@ -157,29 +158,28 @@ def ComputeSyntheticLogs(tools_parameters, model_parameters, measurement_depths,
         A dictionary of numpy arrays created by the SetToolsParameters() function.
 
     model_parameters: list
-        A list of numpy arrays created by the SetModelParameters() funcion.
+        A list of numpy arrays and floats created by the SetModelParameters() funcion.
 
     measurement_depths: array
         A 1D numpy array of depths of simulated measurements.
         Values have to be given in ascending order and corespond to depths of the model.
 
     force_single_electrode_configuration: str
-        Specifies if two-electrode tool configurations will be changed to single-electrode tool configurations.
+        Specifies if two-electrode tool configurations will be changed to equivalent single-electrode tool configurations.
         Enables faster computations. Can be set to True or False.
-        By default set to False.
+        By default set to True.
         
     domain_radius: float, optional
         A radius of simulation domain in meters.
-        By default set to 100.
+        By default set to 50.
 
     processes: int, optional
         Specify a number of processes. Minimal value that can be set is 2, the maximal value should not exceed the number of processes available on computing machine.
         By default set to 4.
 
     mesh_generator: string, optional
-        Specify utiliezed mesh generator.
-        For 2D models can be set to "gmsh" or "netgen", for 3D models it have to be set to "gmsh".
-        By default set to "gmsh".
+        Specify utiliezed mesh generator. Can be set to "gmsh" or "netgen" for 2D models and to "gmsh" for 3D models.
+        By default set to "auto" and will chose "netgen" for 2D models and "gmsh" for 3D models.
  
     preconditioner: string, optional
         Specify a type of utilized preconditioner. Available options: "local" and "multigrid".
@@ -196,14 +196,55 @@ def ComputeSyntheticLogs(tools_parameters, model_parameters, measurement_depths,
         If simulation for a certain depth and tool will fail for some reason, the NaN value will be inserted into log.
     """
 
+    def prepare_simulation_depths_and_tasks(tools_parameters, measurement_depths, single_electrode_computation_mode):
+
+        current_electrode_depths = {}
+        for tool in tools_parameters.keys():
+            current_electrode_depths[tool] = measurement_depths + tools_parameters[tool][1,3] 
+        simulation_depths = np.unique(np.hstack(list(current_electrode_depths.values())))
+
+        if single_electrode_computation_mode==True:
+            tasks = []
+            for simulation_depth_index in range(len(simulation_depths)):
+
+                simulation_depth = simulation_depths[simulation_depth_index]
+                modelling_tasks = []
+                potential_electodes_depths = []
+                for tool_index in range(len(list(tools_parameters.keys()))):
+                    tool = list(tools_parameters.keys())[tool_index]
+                    if np.any(np.isclose(current_electrode_depths[tool], simulation_depth)):
+                        measurement_depth_index = np.argwhere(np.isclose(measurement_depths + tools_parameters[tool][1,3], simulation_depth))[0][0]
+                        modelling_tasks.append([measurement_depth_index, tool_index])
+                        tool_electrodes = tools_parameters[tool][:,:3].copy() 
+                        tool_electrodes[0,:] -= tools_parameters[tool][1,3] 
+                        potential_electodes_depths += list(tool_electrodes[0, tool_electrodes[1,:]==0])
+
+                unique_potential_electodes_depths = np.unique(potential_electodes_depths)
+                combined_tools = np.zeros((2, len(unique_potential_electodes_depths)+1))
+                combined_tools[1,0] = 1
+                combined_tools[0,1:] = unique_potential_electodes_depths
+                combined_tools = combined_tools[:,combined_tools[0,:].argsort()]
+                tasks.append([simulation_depth_index, combined_tools, modelling_tasks])
+                
+        elif single_electrode_computation_mode==False:
+            tool_list = list(range(len(tools_parameters.keys())))
+            tasks = [] 
+            for tool_index in range(len(list(tools_parameters.keys()))):
+                tool = list(tools_parameters.keys())[tool_index]
+                for measurement_depth_index in range(len(current_electrode_depths[tool])):
+                    depth =  current_electrode_depths[tool][measurement_depth_index]
+                    simulation_depth_index = np.argwhere(np.isclose(simulation_depths, depth))[0][0]
+                    tasks.append([simulation_depth_index, tools_parameters[tool][:,:3], [[measurement_depth_index, tool_index]]])
+
+        return simulation_depths, tasks
+    
+    
     ### Start the clock
     start_time = datetime.datetime.now()
 
-    ### Create temporary directory for mesh files
-    if not os.path.exists("./tmp"):
-        os.makedirs("./tmp")
-
     ### Unpack parameters and prepare data
+    ## Tools
+    # Convert tools to single-electrode configurations
     if force_single_electrode_configuration==False:
         pass
     elif force_single_electrode_configuration==True:
@@ -217,48 +258,75 @@ def ComputeSyntheticLogs(tools_parameters, model_parameters, measurement_depths,
     else:
         raise ValueError("The value of parameter force_single_electrode_configuration can be set only to True or False")
     
+    # Check if all tools are in single-electode configuration
+    single_electrode_computation_mode = True
+    for tool in tools_parameters.keys():
+        if np.isclose(np.sum(tools_parameters[tool][1,:3]), 0)==True:
+            single_electrode_computation_mode = False
+            
+    ## Model
     formation_parameters = model_parameters[0]
     borehole_parameters = model_parameters[1]
     dip = model_parameters[2]*np.pi/180 #converted to radians
-
-    simulation_depths = dict()
+   
+    ## Simulation domain
     domain_radius_alert = False
     for tool in tools_parameters.keys():
         tools_parameters[tool][0,:3] -= tools_parameters[tool][1,3] # center simulation around current electrodes
-        simulation_depths[tool] = measurement_depths + tools_parameters[tool][1,3]
         if np.max(np.abs(tools_parameters[tool][0,:3])) > domain_radius:
             raise ValueError("Some electrodes are locate outside the simulation domain. Domain size have to be increased")
         elif np.max(np.abs(tools_parameters[tool][0,:3])) > 0.75*domain_radius:
             domain_radius_alert = True
     if domain_radius_alert == True:
         print("Some electrodes are located close to the boundary of the simulation domain. This may cause problems during simulation. Consider increase of the domain size")
-    
-    if dip!=0 and mesh_generator!="gmsh":
-        raise ValueError("The only mesh generator supported in 3D models is gmsh")
 
+    ## Mesh generator setup
+    if mesh_generator=="auto":
+        if np.isclose(dip, 0):
+            mesh_generator = "netgen"
+        else:
+            mesh_generator = "gmsh"
+
+    # Check if mesh generator suports model geometry
+    if ~np.isclose(dip, 0) and mesh_generator!="gmsh":
+        raise ValueError("The only mesh generator supported in 3D models is gmsh")
+    
+    # Create temporary directory for mesh files
+    if mesh_generator=="gmsh" and not os.path.exists("./tmp"):
+        os.makedirs("./tmp")
+        
+    # Create dense borehole geometry for the purpose of 3D mesh generation (necessary to avoid errors during meshing procedure)
     if dip!=0:
-        # Create dense borehole geometry for the purpose of 3D mesh generation (necessary to avoid errors during meshing procedure)
         borehole_parameters = AddPointsToBorehole(borehole_parameters, 0.15)
 
     borehole_geometry = np.ascontiguousarray(borehole_parameters[:,:2])
-    mud_resistivities = np.interp(measurement_depths, borehole_parameters[:,0], borehole_parameters[:,2])
 
     ### Parallel FEM computation
-    ## Specify number of workers and tasks
     
+    tool_list = list(range(len(tools_parameters.keys())))
+    measurement_depths_list = list(range(len(measurement_depths)))
+
+    ## Compute simulation depths and prepare tasks
+    simulation_depths, task_list = prepare_simulation_depths_and_tasks(tools_parameters, measurement_depths, single_electrode_computation_mode)
+    
+    n_tasks = len(task_list)
+
+    # Mud resistivities at simulation depths
+    mud_resistivities = np.interp(simulation_depths, borehole_parameters[:,0], borehole_parameters[:,2])
+    
+    ## Specify number of workers
     if type(processes) != int:
         raise ValueError("The number of processes have to be intager")
     if processes < 2:
         raise ValueError("Minimal number of processes is 2")
     
-    n_workers = processes - 1 # one process is reserved for the master, the rest for the workers
-    n_tasks = np.shape(measurement_depths)[0]
-
+    n_workers = processes - 1 # one process is reserved for the main
+    
     ## Spawn workers
     comm = MPI.COMM_WORLD.Spawn(
-        sys.executable,
-        args=[os.path.join(os.path.dirname(os.path.abspath(__file__)), 'worker.py')], 
-        maxprocs=n_workers)
+            sys.executable,
+            args=[os.path.join(os.path.dirname(os.path.abspath(__file__)), 'worker.py')], 
+            maxprocs=n_workers)
 
     ## Broadcast data to workers
     # Broadcast information about shapes of broadcasted arrays
@@ -280,29 +348,28 @@ def ComputeSyntheticLogs(tools_parameters, model_parameters, measurement_depths,
     ## Wait for all workers to receive data
     comm.barrier()
 
-    ## Prepare tasks 
-    task_list = []   
-    tool_list = list(range(len(tools_parameters.keys())))
-    measurement_depths_list = list(range(len(measurement_depths)))
-    for task in itertools.product(measurement_depths_list, tool_list):
-        task_list.append(list(task))
+    ## Convert tasks to mesages 
+    print("{} simulation tasks prepared".format(n_tasks))
     msg_list = task_list + ([StopIteration] * n_workers) # Append stop sentinel for each worker
 
     ## Dispatch tasks to workers
     status = MPI.Status()
-    for i in msg_list:
-        if i != StopIteration:
+    i = 0
+    for msg in msg_list:
+        if msg != StopIteration:
+            i += 1
             # Pass data to worker
             comm.recv(source=MPI.ANY_SOURCE, status=status)
-            comm.send(obj=i, dest=status.Get_source())
+            comm.send(obj=msg, dest=status.Get_source())
             # Progress bar
-            percent = ((i[0] + 1) * 100) // (n_tasks)
+            percent = ((i) * 100) // (n_tasks)
             sys.stdout.write('\rProgress: [%-50s] %3i%% ' % ('=' * (percent // 2), percent))
             sys.stdout.flush()
+            
         else:
             # Tell worker to shutdown
             comm.recv(source=MPI.ANY_SOURCE, status=status)
-            comm.send(obj=i, dest=status.Get_source())
+            comm.send(obj=msg, dest=status.Get_source())
 
     # Gather results from workers
     list_of_results = [item for sublist in comm.gather(None, root=MPI.ROOT) for item in sublist]
@@ -319,16 +386,17 @@ def ComputeSyntheticLogs(tools_parameters, model_parameters, measurement_depths,
     ### Shutdown MPI
     comm.Disconnect()
 
-    ### Remove tmp folder with and mesh files
-    shutil.rmtree("./tmp")
+    ### Remove tmp folder and mesh files
+    if mesh_generator=="gmsh":
+        shutil.rmtree("./tmp")
 
-    ## Report time of computation
+    ### Report time of computation
     print('\nProcessed in: ', datetime.datetime.now() - start_time)
 
     return logs
 
 
-def SaveResults(model_parameters, measurement_results, measurement_to_save="auto", output_folder=None, plot_layout="auto", depth_lim="auto", rad_lim="auto", res_lim="auto", model_res_lim="auto", aspect_ratio = "auto", at_nan="break", interpolation_factor=1, colors="auto"):
+def SaveResults(model_parameters, measurement_results, output_folder=None, measurements_to_save="auto", plot_layout="auto", plot_depth_lim="auto", plot_aspect_ratio="auto", model_rad_lim="auto", model_res_lim="auto", logs_res_lim="auto", logs_at_nan="break", logs_interpolation_factor=1, logs_colours="auto"):
     """
     This function saves results of modelling to txt file and produces raw visualization of the model and computed syntetic logs that is saved in PNG format.
 
@@ -338,48 +406,56 @@ def SaveResults(model_parameters, measurement_results, measurement_to_save="auto
         A list of numpy arrays created by the SetModelParameters() funcion.
 
     measurement_results: dict
-        A dictionary of 1D numpy arrays created by the ComputeSynteticLogs function.
-        
-    measurement_to_save: str or list
-        A list of measurements to save.
-        By default set to "auto" will save all measurements.
+        A dictionary of numpy arrays created by the ComputeSynteticLogs() function.
 
     output_folder: str
         A path to the folder where results will be saved.
-        By default set to None will only show results without saving them.
-
+        By default set to None will only show raw visualization of the model and computed syntetic logs without saving them to txt files (works only in Jupyter Notebooks).
+        
+    measurements_to_save: str or list
+        A list of measurements to save to txt files.
+        By default set to "auto" will save all measurements.
+    
     plot_layout: list, optional
-        a list of sublists of tool names. Each sublist consist of tool names assigned to certain track.
+        A list of sublists of tool names. Each sublist consist of tool names assigned to certain track.
         By default set to "auto" will plot all logs on a sigle track.
 
-    depth_lim: list, optional
+    plot_depth_lim: list, optional
         A list of two floats that specify minimum and maximum depth of ploted data.
         By default set to "auto" will plot data for entire range of avilable depths.
-
-    rad_lim: list, optional
+    
+    plot_aspect_ratio: float, optional
+        A float that specify hight to widht ratio of the plot.
+        By default set to "auto" will automaticly adjust the value of parameter based on number of tracks
+        within layout and values of plot_depth_lim and  model_rad_lim parameters.
+        
+    model_rad_lim: list, optional
         A list of two floats that specify minimum and maximum radius of ploted formation model.
         By default set to "auto" will plot data from borehole axis to radius 2 times as big as
         deepest filtration zone or 10 times as big as largest borehole radius if no filtration zone
         is present within the model.
     
-    res_lim: list, optional
+    model_res_lim: list, optional
+        A list of two floats that specify minimum and maximum value of model resistivity.
+        By default set to "auto" will automaticly adjust range to model resistivities.
+        
+    logs_res_lim: list, optional
         A list of two floats that specify minimum and maximum value of ploted resistivity logs.
         By default set to "auto" will automaticly adjust range to show entire logs.
-    
-    aspect_ratio: float, optional
-        A float that specify hight to widht ratio of the plot.
-        By default set to "auto" will automaticly adjust the value of parameter based on number of tracks
-        within layout and values of depth_lim and rad_lim parameters.
 
-    at_nan: str, optional
+    logs_at_nan: str, optional
         Specify if plot should be breaked or continued on Nan values.
         Available options: "break" and "continue".
         By default set to "break".
     
-    interpolation_factor: float, optional
+    logs_interpolation_factor: float, optional
         Allows to smooth logs on vizualization. Have no inpact on output data.
         By default set to 1 (no interpolation).
-
+    
+    logs_colours: list, optional
+        A list of sublists of logs colours. Each sublist consist of logs colours assigned to certain track.
+        Have to have the same structure as list pased in plot_layout parameter.
+        By default set to "auto" will automaticly assign different colours to logs.
     """
     
     if output_folder!=None:
@@ -390,10 +466,10 @@ def SaveResults(model_parameters, measurement_results, measurement_to_save="auto
             os.makedirs(output_subfolder)
 
         ### Save data to txt files
-        if measurement_to_save=="auto":
-            measurement_to_save = list(measurement_results.keys())
+        if measurements_to_save=="auto":
+            measurements_to_save = list(measurement_results.keys())
 
-        logs_to_save = measurement_to_save.copy()
+        logs_to_save = measurements_to_save.copy()
         file_number = 1
         while len(logs_to_save)>0:
             logs = [logs_to_save[0]]
@@ -423,22 +499,22 @@ def SaveResults(model_parameters, measurement_results, measurement_to_save="auto
     dip = model_parameters[2]
 
     ## Smooth logs
-    if interpolation_factor > 1:
+    if logs_interpolation_factor > 1:
         logs = list(measurement_results.keys())
         for log in logs:
-            measurement_depths_interp = np.linspace(np.min(measurement_results[log][:,0]), np.max(measurement_results[log][:,0]), int(np.shape(measurement_results[log])[0]*interpolation_factor))
+            measurement_depths_interp = np.linspace(np.min(measurement_results[log][:,0]), np.max(measurement_results[log][:,0]), int(np.shape(measurement_results[log])[0]*logs_interpolation_factor))
             interpolation = spi.interp1d(measurement_results[log][:,0], measurement_results[log][:,1], kind='cubic')
             measurement_results[log] = np.vstack([measurement_depths_interp, interpolation(measurement_depths_interp)]).T
 
     ## Prepare plot limits:
-    if depth_lim == "auto":
-        depth_lim = [np.nanmin(formation_parameters[:,:2]), np.nanmax(formation_parameters[:,:2])]
-    if rad_lim == "auto":
+    if plot_depth_lim == "auto":
+        plot_depth_lim = [np.nanmin(formation_parameters[:,:2]), np.nanmax(formation_parameters[:,:2])]
+    if  model_rad_lim == "auto":
         if np.all(np.isnan(formation_parameters[:,2])):
-            rad_lim = [-10*np.nanmax(borehole_parameters[:,1]), 10*np.nanmax(borehole_parameters[:,1])]
+             model_rad_lim = [-10*np.nanmax(borehole_parameters[:,1]), 10*np.nanmax(borehole_parameters[:,1])]
         else:
-            rad_lim = [-2*np.nanmax(formation_parameters[:,2]), 2*np.nanmax(formation_parameters[:,2])]
-    if res_lim == "auto":
+             model_rad_lim = [-2*np.nanmax(formation_parameters[:,2]), 2*np.nanmax(formation_parameters[:,2])]
+    if logs_res_lim == "auto":
         res_max = 0
         for log in measurement_results.values():
             res_max = max(np.max(log), res_max)
@@ -447,30 +523,30 @@ def SaveResults(model_parameters, measurement_results, measurement_to_save="auto
             res_min = min(np.min(log), res_min)
         res_min = np.floor(res_min/10**np.floor(np.log10(res_max)-1)) * 10**np.floor(np.log10(res_max)-1)
         res_max = np.ceil(res_max/10**np.floor(np.log10(res_max)-1)) * 10**np.floor(np.log10(res_max)-1)
-        res_lim = [res_min, res_max]
-    if aspect_ratio == "auto":
-        aspect_ratio = (depth_lim[1] - depth_lim[0])/25*1.25
+        logs_res_lim = [res_min, res_max]
+    if plot_aspect_ratio == "auto":
+        plot_aspect_ratio = (plot_depth_lim[1] - plot_depth_lim[0])/25*1.25
     
     ## Prepare polygons
     patches = []
 
     # Formation
     a = np.tan(dip*np.pi/180)
-    formation_parameters[0,0] -= a*rad_lim[1] # adjust model to fill the plot
-    formation_parameters[-1,1] += a*rad_lim[1] # adjust model to fill the plot
+    formation_parameters[0,0] -= a* model_rad_lim[1] # adjust model to fill the plot
+    formation_parameters[-1,1] += a* model_rad_lim[1] # adjust model to fill the plot
     for i in range(np.shape(formation_parameters)[0]):
         if np.isnan(formation_parameters[i,2]) == True:
-            vetrices = np.array([[rad_lim[0], formation_parameters[i,0]+a*rad_lim[0]],
-                [rad_lim[0], formation_parameters[i,1]+a*rad_lim[0]],
-                [rad_lim[1], formation_parameters[i,1]+a*rad_lim[1]],
-                [rad_lim[1], formation_parameters[i,0]+a*rad_lim[1]]])
+            vetrices = np.array([[ model_rad_lim[0], formation_parameters[i,0]+a* model_rad_lim[0]],
+                [model_rad_lim[0], formation_parameters[i,1]+a* model_rad_lim[0]],
+                [model_rad_lim[1], formation_parameters[i,1]+a* model_rad_lim[1]],
+                [model_rad_lim[1], formation_parameters[i,0]+a* model_rad_lim[1]]])
             polygon = Polygon(vetrices, closed=True)
             patches.append(polygon)
         else:
-            vetrices = np.array([[rad_lim[0], formation_parameters[i,0]+a*rad_lim[0]],
-                [rad_lim[0], formation_parameters[i,1]+a*rad_lim[0]],
-                [rad_lim[1], formation_parameters[i,1]+a*rad_lim[1]],
-                [rad_lim[1], formation_parameters[i,0]+a*rad_lim[1]]])
+            vetrices = np.array([[ model_rad_lim[0], formation_parameters[i,0]+a* model_rad_lim[0]],
+                [model_rad_lim[0], formation_parameters[i,1]+a* model_rad_lim[0]],
+                [model_rad_lim[1], formation_parameters[i,1]+a* model_rad_lim[1]],
+                [model_rad_lim[1], formation_parameters[i,0]+a* model_rad_lim[1]]])
             polygon = Polygon(vetrices, closed=True)
             patches.append(polygon)
             vetrices = np.array([[-formation_parameters[i,2], formation_parameters[i,0]+a*-formation_parameters[i,2]],
@@ -489,7 +565,7 @@ def SaveResults(model_parameters, measurement_results, measurement_to_save="auto
         polygon = Polygon(vetrices, closed=True)
         patches.append(polygon)
         resistivities = np.hstack([resistivities, np.mean(borehole_parameters[:,2])])
-    borehole_axis = Line2D([0, 0], depth_lim, color='black')
+    borehole_axis = Line2D([0, 0], plot_depth_lim, color='black')
 
     ## Plot model and logs
     if plot_layout=="auto":
@@ -498,7 +574,7 @@ def SaveResults(model_parameters, measurement_results, measurement_to_save="auto
         tracks = len(plot_layout)
 
     fig_width = 5 + 5*tracks
-    fig_hight = fig_width*aspect_ratio
+    fig_hight = fig_width*plot_aspect_ratio
     
     resistivities = resistivities[~np.isnan(resistivities)]
     collection = PatchCollection(patches, cmap=matplotlib.cm.viridis)
@@ -515,8 +591,8 @@ def SaveResults(model_parameters, measurement_results, measurement_to_save="auto
     ax[0].add_collection(collection)
     ax[0].add_line(borehole_axis)
     ax[0].margins(x=0, y=0)
-    ax[0].set_xlim(rad_lim)
-    ax[0].set_ylim(depth_lim)
+    ax[0].set_xlim( model_rad_lim)
+    ax[0].set_ylim(plot_depth_lim)
     ax[0].invert_yaxis()
     ax[0].minorticks_on()
     ax[0].set_title('Formation model\n'+ 'dip = ' + str(dip) + '\N{DEGREE SIGN}\n')
@@ -531,10 +607,10 @@ def SaveResults(model_parameters, measurement_results, measurement_to_save="auto
     
     for track in range(1, tracks+1):
             
-        if colors=="auto":
-            track_colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
+        if logs_colours=="auto":
+            track_colours = plt.rcParams["axes.prop_cycle"].by_key()["color"]
         else:
-            track_colors = colors[track-1]
+            track_colours = logs_colours[track-1]
         if plot_layout=="auto":
             logs = list(measurement_results.keys())
         else:
@@ -544,19 +620,19 @@ def SaveResults(model_parameters, measurement_results, measurement_to_save="auto
                 axis = ax[track]
             else:
                 axis = ax[track].twiny()
-            if at_nan=="break":
-                axis.plot(measurement_results[logs[i]][:,1], measurement_results[logs[i]][:,0], color=track_colors[i]) ### ZMIANA NA OSTATNIĄ CHWILĘ color=track_colors[i%len(colors)]
-            elif at_nan=="continue":
+            if logs_at_nan=="break":
+                axis.plot(measurement_results[logs[i]][:,1], measurement_results[logs[i]][:,0], color=track_colours[i]) # change from: color=track_colours[i%len(logs_colours)]
+            elif logs_at_nan=="continue":
                 nan_flag = ~np.isnan(measurement_results[logs[i]][:,1])
-                axis.plot(measurement_results[logs[i]][nan_flag,1], measurement_results[logs[i]][nan_flag,0], color=track_colors[i]) ### ZMIANA NA OSTATNIĄ CHWILĘ color=track_colors[i%len(colors)]
+                axis.plot(measurement_results[logs[i]][nan_flag,1], measurement_results[logs[i]][nan_flag,0], color=track_colours[i]) # change from: color=track_colours[i%len(logs_colours)]
             else:
-                raise ValueError('at_nan paramater has to be set to "break" or "continue"')
-            axis.set_xlabel(logs[i]+"\n[ohmm]", color=track_colors[i%len(track_colors)], labelpad=-8)
-            axis.spines['top'].set_color(track_colors[i%len(track_colors)])
+                raise ValueError('logs_at_nan paramater has to be set to "break" or "continue"')
+            axis.set_xlabel(logs[i]+"\n[ohmm]", color=track_colours[i%len(track_colours)], labelpad=-8)
+            axis.spines['top'].set_color(track_colours[i%len(track_colours)])
             axis.spines['top'].set_position(('outward', i*55+10))
-            axis.set_xticks(res_lim)
-            axis.tick_params(axis='x', color=track_colors[i%len(track_colors)])
-            axis.set_xlim(res_lim)
+            axis.set_xticks(logs_res_lim)
+            axis.tick_params(axis='x', color=track_colours[i%len(track_colours)])
+            axis.set_xlim(logs_res_lim)
         axis = ax[track].twiny().get_xaxis().set_visible(False)
     for track in range(1, tracks+1):
         ax[track].grid(True)
@@ -565,7 +641,7 @@ def SaveResults(model_parameters, measurement_results, measurement_to_save="auto
         ax[track].margins(x=0, y=0)
         ax[track].autoscale_view()
             
-    colorbar = fig.colorbar(collection, ax=ax, location='bottom', orientation='horizontal', pad=0.05, label="Resistivity [ohmm]", shrink=min([1, aspect_ratio]))
+    colorbar = fig.colorbar(collection, ax=ax, location='bottom', orientation='horizontal', pad=0.05, label="Resistivity [ohmm]", shrink=min([1, plot_aspect_ratio]))
     colorbar.ax.minorticks_on()
 
     ## Save plot to png file
@@ -1721,420 +1797,5 @@ def SolveBVP(mesh, sigma, tool_geometry, source_terms, dirichlet_boundary, preco
 
 
 
-### Work in progress versions
+### Work in progress
 
-def ComputeSyntheticLogs_v2(tools_parameters, model_parameters, measurement_depths, force_single_electrode_configuration=False, domain_radius=50, processes=4, mesh_generator="gmsh", preconditioner="multigrid", condense=True):
-
-    def prepare_simulation_depths_and_tasks(tools_parameters, measurement_depths, single_electrode_computation_mode):
-
-        current_electrode_depths = {}
-        for tool in tools_parameters.keys():
-            current_electrode_depths[tool] = measurement_depths + tools_parameters[tool][1,3] 
-        simulation_depths = np.unique(np.hstack(list(current_electrode_depths.values())))
-
-        if single_electrode_computation_mode==True:
-            tasks = []
-            for simulation_depth_index in range(len(simulation_depths)):
-
-                simulation_depth = simulation_depths[simulation_depth_index]
-                modelling_tasks = []
-                potential_electodes_depths = []
-                for tool_index in range(len(list(tools_parameters.keys()))):
-                    tool = list(tools_parameters.keys())[tool_index]
-                    if np.any(np.isclose(current_electrode_depths[tool], simulation_depth)):
-                        measurement_depth_index = np.argwhere(np.isclose(measurement_depths + tools_parameters[tool][1,3], simulation_depth))[0][0]
-                        modelling_tasks.append([measurement_depth_index, tool_index])
-                        tool_electrodes = tools_parameters[tool][:,:3].copy() 
-                        tool_electrodes[0,:] -= tools_parameters[tool][1,3] 
-                        potential_electodes_depths += list(tool_electrodes[0, tool_electrodes[1,:]==0])
-
-                unique_potential_electodes_depths = np.unique(potential_electodes_depths)
-                combined_tools = np.zeros((2, len(unique_potential_electodes_depths)+1))
-                combined_tools[1,0] = 1
-                combined_tools[0,1:] = unique_potential_electodes_depths
-                combined_tools = combined_tools[:,combined_tools[0,:].argsort()]
-                print(combined_tools)
-
-                tasks.append([simulation_depth_index, combined_tools, modelling_tasks])
-                
-        elif single_electrode_computation_mode==False:
-            tool_list = list(range(len(tools_parameters.keys())))
-
-            tasks = [] 
-            for tool_index in range(len(list(tools_parameters.keys()))):
-                tool = list(tools_parameters.keys())[tool_index]
-                for measurement_depth_index in range(len(current_electrode_depths[tool])):
-                    depth =  current_electrode_depths[tool][measurement_depth_index]
-                    simulation_depth_index = np.argwhere(np.isclose(simulation_depths, depth))[0][0]
-                    tasks.append([simulation_depth_index, [measurement_depth_index, tool_index]])
-                    #print([simulation_depth_index, None, [measurement_depth_index, tool_index]])
-            #     simulation_depths[tool] = measurement_depths + tools_parameters[tool][1,3]
-            # tasks = []   
-            # for task in itertools.product(measurement_depths_list, tool_list):
-            #     tasks.append(list(task))            
-
-        return simulation_depths, tasks
-    
-
-    ### Start the clock
-    start_time = datetime.datetime.now()
-
-    ### Create temporary directory for mesh files
-    if not os.path.exists("./tmp"):
-        os.makedirs("./tmp")
-
-    ### Unpack parameters and prepare data
-    ## Tools
-    # Convert tools to single-electrode configurations
-    if force_single_electrode_configuration==False:
-        pass
-    elif force_single_electrode_configuration==True:
-        for tool in tools_parameters.keys():
-            if "A" in tool and "B" in tool:
-                alternative_tool = tool.translate(str.maketrans("ABMN", "MNAB"))
-                alternative_tool_data = [str2float(item) for item in [''.join(group) for _, group in itertools.groupby(alternative_tool, str.isalpha)]]
-                alternative_electrodes = tuple(x for x in alternative_tool_data if isinstance(x, str)) # symbols of eletrodes
-                alternative_distances = [x for x in alternative_tool_data if isinstance(x, float)] # distances between electrodes
-                tools_parameters[tool] = SetToolParameters(alternative_tool, alternative_electrodes, alternative_distances)
-    else:
-        raise ValueError("The value of parameter force_single_electrode_configuration can be set only to True or False")
-    
-    # Check if all tools are in single-electode configuration
-    single_electrode_computation_mode = True
-    for tool in tools_parameters.keys():
-        if np.isclose(np.sum(tools_parameters[tool][1,:3]), 0)==True:
-            single_electrode_computation_mode = False
-            
-    ## Model
-    formation_parameters = model_parameters[0]
-    borehole_parameters = model_parameters[1]
-    dip = model_parameters[2]*np.pi/180 #converted to radians
-   
-    ## Simulation domain
-    domain_radius_alert = False
-    for tool in tools_parameters.keys():
-        tools_parameters[tool][0,:3] -= tools_parameters[tool][1,3] # center simulation around current electrodes
-        if np.max(np.abs(tools_parameters[tool][0,:3])) > domain_radius:
-            raise ValueError("Some electrodes are locate outside the simulation domain. Domain size have to be increased")
-        elif np.max(np.abs(tools_parameters[tool][0,:3])) > 0.75*domain_radius:
-            domain_radius_alert = True
-    if domain_radius_alert == True:
-        print("Some electrodes are located close to the boundary of the simulation domain. This may cause problems during simulation. Consider increase of the domain size")
-    
-    if dip!=0 and mesh_generator!="gmsh":
-        raise ValueError("The only mesh generator supported in 3D models is gmsh")
-    
-    # Create dense borehole geometry for the purpose of 3D mesh generation (necessary to avoid errors during meshing procedure)
-    if dip!=0:
-        borehole_parameters = AddPointsToBorehole(borehole_parameters, 0.15)
-
-    borehole_geometry = np.ascontiguousarray(borehole_parameters[:,:2])
-
-    ### Parallel FEM computation
-    
-    tool_list = list(range(len(tools_parameters.keys())))
-    measurement_depths_list = list(range(len(measurement_depths)))
-
-    ## Compute simulation depths and prepare tasks
-#     if single_electrode_computation_mode==False:
-#         simulation_depths = dict()
-#         for tool in tools_parameters.keys():
-#             simulation_depths[tool] = measurement_depths + tools_parameters[tool][1,3]
-#         task_list = []   
-#         for task in itertools.product(measurement_depths_list, tool_list):
-#             task_list.append(list(task))
-#     elif single_electrode_computation_mode==True:
-#         simulation_depths, task_list = prepare_simulation_depths_and_tasks(tools_parameters, measurement_depths)
-        
-    simulation_depths, task_list = prepare_simulation_depths_and_tasks(tools_parameters, measurement_depths, single_electrode_computation_mode)
-    
-    n_tasks = len(task_list)
-
-    # Mud resistivities at simulation depths
-    mud_resistivities = np.interp(simulation_depths, borehole_parameters[:,0], borehole_parameters[:,2])
-    
-    ## Specify number of workers
-    if type(processes) != int:
-        raise ValueError("The number of processes have to be intager")
-    if processes < 2:
-        raise ValueError("Minimal number of processes is 2")
-    
-    n_workers = processes - 1 # one process is reserved for the main
-    
-    ## Spawn workers
-    comm = MPI.COMM_WORLD.Spawn(
-            sys.executable,
-            args=[os.path.join(os.path.dirname(os.path.abspath(__file__)), 'worker_v2.py')], 
-            maxprocs=n_workers)
-    # if single_electrode_computation_mode==False:
-    #     comm = MPI.COMM_WORLD.Spawn(
-    #         sys.executable,
-    #         args=[os.path.join(os.path.dirname(os.path.abspath(__file__)), 'worker.py')], 
-    #         maxprocs=n_workers)        
-    # elif single_electrode_computation_mode==True:
-    #     comm = MPI.COMM_WORLD.Spawn(
-    #         sys.executable,
-    #         args=[os.path.join(os.path.dirname(os.path.abspath(__file__)), 'worker_v2.py')], 
-    #         maxprocs=n_workers)
-
-    ## Broadcast data to workers
-    # Broadcast information about shapes of broadcasted arrays
-    arrays_shape = [np.shape(formation_parameters), np.shape(borehole_geometry), np.shape(mud_resistivities)]
-    comm.bcast(arrays_shape, root=MPI.ROOT)
-
-    # Broadcast data
-    comm.Bcast([formation_parameters, MPI.FLOAT], root=MPI.ROOT)
-    comm.Bcast([borehole_geometry, MPI.FLOAT], root=MPI.ROOT)
-    comm.Bcast([mud_resistivities, MPI.FLOAT], root=MPI.ROOT)
-    comm.bcast(dip, root=MPI.ROOT)
-    comm.bcast(tools_parameters, root=MPI.ROOT)
-    comm.bcast(simulation_depths, root=MPI.ROOT)
-    comm.bcast(domain_radius, root=MPI.ROOT)
-    comm.bcast(mesh_generator, root=MPI.ROOT)
-    comm.bcast(preconditioner, root=MPI.ROOT)
-    comm.bcast(condense, root=MPI.ROOT)
-
-    ## Wait for all workers to receive data
-    comm.barrier()
-
-    ## Convert tasks to mesages 
-    print("{} simulation tasks prepared".format(n_tasks))
-    msg_list = task_list + ([StopIteration] * n_workers) # Append stop sentinel for each worker
-
-    ## Dispatch tasks to workers
-    status = MPI.Status()
-    i = 0
-    for msg in msg_list:
-        if msg != StopIteration:
-            i += 1
-            # Pass data to worker
-            comm.recv(source=MPI.ANY_SOURCE, status=status)
-            comm.send(obj=msg, dest=status.Get_source())
-            # Progress bar
-            percent = ((i) * 100) // (n_tasks)
-            sys.stdout.write('\rProgress: [%-50s] %3i%% ' % ('=' * (percent // 2), percent))
-            sys.stdout.flush()
-            
-        else:
-            # Tell worker to shutdown
-            comm.recv(source=MPI.ANY_SOURCE, status=status)
-            comm.send(obj=msg, dest=status.Get_source())
-
-    # Gather results from workers
-    list_of_results = [item for sublist in comm.gather(None, root=MPI.ROOT) for item in sublist]
-   
-    ## Format and sort results
-    results = np.empty([len(measurement_depths_list), len(tool_list)])
-    for result in list_of_results:
-        results[result[0], result[1]] = result[2]
-
-    logs = dict()
-    for i in range(len(tools_parameters.keys())):
-        logs[list(tools_parameters.keys())[i]] = np.vstack([measurement_depths, results[:,i]]).T
-
-    ### Shutdown MPI
-    comm.Disconnect()
-
-    ### Remove tmp folder and mesh files
-    shutil.rmtree("./tmp")
-
-    ## Report time of computation
-    print('\nProcessed in: ', datetime.datetime.now() - start_time)
-
-    return logs
-
-
-
-
-
-def ComputeSyntheticLogs_v3(tools_parameters, model_parameters, measurement_depths, force_single_electrode_configuration=True, domain_radius=50, processes=4, mesh_generator="gmsh", preconditioner="multigrid", condense=True):
-
-    def prepare_simulation_depths_and_tasks(tools_parameters, measurement_depths, single_electrode_computation_mode):
-
-        current_electrode_depths = {}
-        for tool in tools_parameters.keys():
-            current_electrode_depths[tool] = measurement_depths + tools_parameters[tool][1,3] 
-        simulation_depths = np.unique(np.hstack(list(current_electrode_depths.values())))
-
-        if single_electrode_computation_mode==True:
-            tasks = []
-            for simulation_depth_index in range(len(simulation_depths)):
-
-                simulation_depth = simulation_depths[simulation_depth_index]
-                modelling_tasks = []
-                potential_electodes_depths = []
-                for tool_index in range(len(list(tools_parameters.keys()))):
-                    tool = list(tools_parameters.keys())[tool_index]
-                    if np.any(np.isclose(current_electrode_depths[tool], simulation_depth)):
-                        measurement_depth_index = np.argwhere(np.isclose(measurement_depths + tools_parameters[tool][1,3], simulation_depth))[0][0]
-                        modelling_tasks.append([measurement_depth_index, tool_index])
-                        tool_electrodes = tools_parameters[tool][:,:3].copy() 
-                        tool_electrodes[0,:] -= tools_parameters[tool][1,3] 
-                        potential_electodes_depths += list(tool_electrodes[0, tool_electrodes[1,:]==0])
-
-                unique_potential_electodes_depths = np.unique(potential_electodes_depths)
-                combined_tools = np.zeros((2, len(unique_potential_electodes_depths)+1))
-                combined_tools[1,0] = 1
-                combined_tools[0,1:] = unique_potential_electodes_depths
-                combined_tools = combined_tools[:,combined_tools[0,:].argsort()]
-                tasks.append([simulation_depth_index, combined_tools, modelling_tasks])
-                
-        elif single_electrode_computation_mode==False:
-            tool_list = list(range(len(tools_parameters.keys())))
-            tasks = [] 
-            for tool_index in range(len(list(tools_parameters.keys()))):
-                tool = list(tools_parameters.keys())[tool_index]
-                for measurement_depth_index in range(len(current_electrode_depths[tool])):
-                    depth =  current_electrode_depths[tool][measurement_depth_index]
-                    simulation_depth_index = np.argwhere(np.isclose(simulation_depths, depth))[0][0]
-                    tasks.append([simulation_depth_index, tools_parameters[tool][:,:3], [[measurement_depth_index, tool_index]]])
-
-        return simulation_depths, tasks
-    
-
-    ### Start the clock
-    start_time = datetime.datetime.now()
-
-    ### Create temporary directory for mesh files
-    if not os.path.exists("./tmp"):
-        os.makedirs("./tmp")
-
-    ### Unpack parameters and prepare data
-    ## Tools
-    # Convert tools to single-electrode configurations
-    if force_single_electrode_configuration==False:
-        pass
-    elif force_single_electrode_configuration==True:
-        for tool in tools_parameters.keys():
-            if "A" in tool and "B" in tool:
-                alternative_tool = tool.translate(str.maketrans("ABMN", "MNAB"))
-                alternative_tool_data = [str2float(item) for item in [''.join(group) for _, group in itertools.groupby(alternative_tool, str.isalpha)]]
-                alternative_electrodes = tuple(x for x in alternative_tool_data if isinstance(x, str)) # symbols of eletrodes
-                alternative_distances = [x for x in alternative_tool_data if isinstance(x, float)] # distances between electrodes
-                tools_parameters[tool] = SetToolParameters(alternative_tool, alternative_electrodes, alternative_distances)
-    else:
-        raise ValueError("The value of parameter force_single_electrode_configuration can be set only to True or False")
-    
-    # Check if all tools are in single-electode configuration
-    single_electrode_computation_mode = True
-    for tool in tools_parameters.keys():
-        if np.isclose(np.sum(tools_parameters[tool][1,:3]), 0)==True:
-            single_electrode_computation_mode = False
-            
-    ## Model
-    formation_parameters = model_parameters[0]
-    borehole_parameters = model_parameters[1]
-    dip = model_parameters[2]*np.pi/180 #converted to radians
-   
-    ## Simulation domain
-    domain_radius_alert = False
-    for tool in tools_parameters.keys():
-        tools_parameters[tool][0,:3] -= tools_parameters[tool][1,3] # center simulation around current electrodes
-        if np.max(np.abs(tools_parameters[tool][0,:3])) > domain_radius:
-            raise ValueError("Some electrodes are locate outside the simulation domain. Domain size have to be increased")
-        elif np.max(np.abs(tools_parameters[tool][0,:3])) > 0.75*domain_radius:
-            domain_radius_alert = True
-    if domain_radius_alert == True:
-        print("Some electrodes are located close to the boundary of the simulation domain. This may cause problems during simulation. Consider increase of the domain size")
-    
-    if dip!=0 and mesh_generator!="gmsh":
-        raise ValueError("The only mesh generator supported in 3D models is gmsh")
-    
-    # Create dense borehole geometry for the purpose of 3D mesh generation (necessary to avoid errors during meshing procedure)
-    if dip!=0:
-        borehole_parameters = AddPointsToBorehole(borehole_parameters, 0.15)
-
-    borehole_geometry = np.ascontiguousarray(borehole_parameters[:,:2])
-
-    ### Parallel FEM computation
-    
-    tool_list = list(range(len(tools_parameters.keys())))
-    measurement_depths_list = list(range(len(measurement_depths)))
-
-    ## Compute simulation depths and prepare tasks
-    simulation_depths, task_list = prepare_simulation_depths_and_tasks(tools_parameters, measurement_depths, single_electrode_computation_mode)
-    
-    n_tasks = len(task_list)
-
-    # Mud resistivities at simulation depths
-    mud_resistivities = np.interp(simulation_depths, borehole_parameters[:,0], borehole_parameters[:,2])
-    
-    ## Specify number of workers
-    if type(processes) != int:
-        raise ValueError("The number of processes have to be intager")
-    if processes < 2:
-        raise ValueError("Minimal number of processes is 2")
-    
-    n_workers = processes - 1 # one process is reserved for the main
-    
-    ## Spawn workers
-    comm = MPI.COMM_WORLD.Spawn(
-            sys.executable,
-            args=[os.path.join(os.path.dirname(os.path.abspath(__file__)), 'worker_v3.py')], 
-            maxprocs=n_workers)
-
-    ## Broadcast data to workers
-    # Broadcast information about shapes of broadcasted arrays
-    arrays_shape = [np.shape(formation_parameters), np.shape(borehole_geometry), np.shape(mud_resistivities)]
-    comm.bcast(arrays_shape, root=MPI.ROOT)
-
-    # Broadcast data
-    comm.Bcast([formation_parameters, MPI.FLOAT], root=MPI.ROOT)
-    comm.Bcast([borehole_geometry, MPI.FLOAT], root=MPI.ROOT)
-    comm.Bcast([mud_resistivities, MPI.FLOAT], root=MPI.ROOT)
-    comm.bcast(dip, root=MPI.ROOT)
-    comm.bcast(tools_parameters, root=MPI.ROOT)
-    comm.bcast(simulation_depths, root=MPI.ROOT)
-    comm.bcast(domain_radius, root=MPI.ROOT)
-    comm.bcast(mesh_generator, root=MPI.ROOT)
-    comm.bcast(preconditioner, root=MPI.ROOT)
-    comm.bcast(condense, root=MPI.ROOT)
-
-    ## Wait for all workers to receive data
-    comm.barrier()
-
-    ## Convert tasks to mesages 
-    print("{} simulation tasks prepared".format(n_tasks))
-    msg_list = task_list + ([StopIteration] * n_workers) # Append stop sentinel for each worker
-
-    ## Dispatch tasks to workers
-    status = MPI.Status()
-    i = 0
-    for msg in msg_list:
-        if msg != StopIteration:
-            i += 1
-            # Pass data to worker
-            comm.recv(source=MPI.ANY_SOURCE, status=status)
-            comm.send(obj=msg, dest=status.Get_source())
-            # Progress bar
-            percent = ((i) * 100) // (n_tasks)
-            sys.stdout.write('\rProgress: [%-50s] %3i%% ' % ('=' * (percent // 2), percent))
-            sys.stdout.flush()
-            
-        else:
-            # Tell worker to shutdown
-            comm.recv(source=MPI.ANY_SOURCE, status=status)
-            comm.send(obj=msg, dest=status.Get_source())
-
-    # Gather results from workers
-    list_of_results = [item for sublist in comm.gather(None, root=MPI.ROOT) for item in sublist]
-   
-    ## Format and sort results
-    results = np.empty([len(measurement_depths_list), len(tool_list)])
-    for result in list_of_results:
-        results[result[0], result[1]] = result[2]
-
-    logs = dict()
-    for i in range(len(tools_parameters.keys())):
-        logs[list(tools_parameters.keys())[i]] = np.vstack([measurement_depths, results[:,i]]).T
-
-    ### Shutdown MPI
-    comm.Disconnect()
-
-    ### Remove tmp folder and mesh files
-    shutil.rmtree("./tmp")
-
-    ## Report time of computation
-    print('\nProcessed in: ', datetime.datetime.now() - start_time)
-
-    return logs
