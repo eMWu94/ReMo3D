@@ -51,58 +51,58 @@ comm.barrier()
 ## Ask for tasks until receving stop sentinel
 results = list()
 for task in iter(lambda: comm.sendrecv(None, dest=0), StopIteration):
-    # try:
-    depth_index = task[0]
-    tool = task[1]
-    tool_geometry = tool[0,:]
-    source_terms = tool[1,:]
+    try:
+        depth_index = task[0]
+        tool = task[1]
+        tool_geometry = tool[0,:]
+        source_terms = tool[1,:]
 
-    ## Generate mesh
-    # Generate mesh using gmsh
-    if mesh_generator=="gmsh":
-        # Carve out suitable range of data
-        local_borehole_geometry = rm.SelectGmshBoreholeDataRange(borehole_geometry, dip, simulation_depths[depth_index], domain_radius)
-        local_formation_geometry, local_formation_resistivity = rm.SelectGmshFormationDataRange(formation_parameters, dip, simulation_depths[depth_index], domain_radius)          
-        # Create geometry and mesh
-        if dip==0:
-            mesh = rm.ConstructGmsh2dModel(domain_radius, tool_geometry, source_terms, local_formation_geometry, local_borehole_geometry, rank, mesh_generator)
-        else:
-            mesh = rm.ConstructGmsh3dModel(domain_radius, tool_geometry, source_terms, local_formation_geometry, dip, local_borehole_geometry, rank)
-        sigma = CoefficientFunction([1/mud_resistivities[depth_index]] + list(1/local_formation_resistivity)) # Conductivity distribution within the model
-        dirichlet_boundary = 'dirichlet_boundary'
-    # Generate mesh using netgen
-    elif mesh_generator=="netgen":
-        # Carve out suitable range of data
-        local_formation_geometry, local_borehole_geometry, sigma = rm.SelectNetgenDataRange(borehole_geometry, formation_parameters, mud_resistivities[depth_index], simulation_depths[depth_index], domain_radius)
-        # Create geometry and mesh
-        mesh = rm.ConstructNetgen2dModel(domain_radius, tool_geometry, local_formation_geometry, local_borehole_geometry, source_terms)
-        dirichlet_boundary = [2]
- 
-    ## Solve BVP
-    fes, gfu = rm.SolveBVP(mesh, sigma, tool_geometry, source_terms, dirichlet_boundary, preconditioner, condense)
+        ## Generate mesh
+        # Generate mesh using gmsh
+        if mesh_generator=="gmsh":
+            # Carve out suitable range of data
+            local_borehole_geometry = rm.SelectGmshBoreholeDataRange(borehole_geometry, dip, simulation_depths[depth_index], domain_radius)
+            local_formation_geometry, local_formation_resistivity = rm.SelectGmshFormationDataRange(formation_parameters, dip, simulation_depths[depth_index], domain_radius)          
+            # Create geometry and mesh
+            if dip==0:
+                mesh = rm.ConstructGmsh2dModel(domain_radius, tool_geometry, source_terms, local_formation_geometry, local_borehole_geometry, rank, mesh_generator)
+            else:
+                mesh = rm.ConstructGmsh3dModel(domain_radius, tool_geometry, source_terms, local_formation_geometry, dip, local_borehole_geometry, rank)
+            sigma = CoefficientFunction([1/mud_resistivities[depth_index]] + list(1/local_formation_resistivity)) # Conductivity distribution within the model
+            dirichlet_boundary = 'dirichlet_boundary'
+        # Generate mesh using netgen
+        elif mesh_generator=="netgen":
+            # Carve out suitable range of data
+            local_formation_geometry, local_borehole_geometry, sigma = rm.SelectNetgenDataRange(borehole_geometry, formation_parameters, mud_resistivities[depth_index], simulation_depths[depth_index], domain_radius)
+            # Create geometry and mesh
+            mesh = rm.ConstructNetgen2dModel(domain_radius, tool_geometry, local_formation_geometry, local_borehole_geometry, source_terms)
+            dirichlet_boundary = [2]
 
-    ## Compute measured resistivity
-    for rc_task in task[2]:
-        tool = list(tools_parameters.keys())[rc_task[1]]
-        depth = rc_task[0]
-        tool_geometry = tools_parameters[tool][0,:3]
-        source_terms = tools_parameters[tool][1,:3]
-        geometric_factor = tools_parameters[tool][0,3]
-        measuring_electodes = tool_geometry[source_terms==0]
-        if dip==0:
-            if np.shape(measuring_electodes)[0] == 2:
-                result = abs(geometric_factor * (gfu(mesh(0.0, measuring_electodes[1]))-gfu(mesh(0.0, measuring_electodes[0]))))
-            elif np.shape(measuring_electodes)[0] == 1:
-                result = abs(geometric_factor * gfu(mesh(0.0, measuring_electodes[0])))
-        else:
-            if np.shape(measuring_electodes)[0] == 2:
-                result = abs(geometric_factor * (gfu(mesh(0.0, 0.0, measuring_electodes[1]))-gfu(mesh(0.0, 0.0, measuring_electodes[0]))))/2 # division by two because only halfsphere is present within the model
-            elif np.shape(measuring_electodes)[0] == 1:
-                result = abs(geometric_factor * gfu(mesh(0.0, 0.0, measuring_electodes[0])))/2 # division by two because only halfsphere is present within the model
-        # Append result to results
-        results.append([rc_task[0], rc_task[1], result])
-    # except:
-    #     results.append([rc_task[0], rc_task[1], np.nan])
+        ## Solve BVP
+        fes, gfu = rm.SolveBVP(mesh, sigma, tool_geometry, source_terms, dirichlet_boundary, preconditioner, condense)
+
+        ## Compute measured resistivity
+        for rc_task in task[2]:
+            tool = list(tools_parameters.keys())[rc_task[1]]
+            depth = rc_task[0]
+            tool_geometry = tools_parameters[tool][0,:3]
+            source_terms = tools_parameters[tool][1,:3]
+            geometric_factor = tools_parameters[tool][0,3]
+            measuring_electodes = tool_geometry[source_terms==0]
+            if dip==0:
+                if np.shape(measuring_electodes)[0] == 2:
+                    result = abs(geometric_factor * (gfu(mesh(0.0, measuring_electodes[1]))-gfu(mesh(0.0, measuring_electodes[0]))))
+                elif np.shape(measuring_electodes)[0] == 1:
+                    result = abs(geometric_factor * gfu(mesh(0.0, measuring_electodes[0])))
+            else:
+                if np.shape(measuring_electodes)[0] == 2:
+                    result = abs(geometric_factor * (gfu(mesh(0.0, 0.0, measuring_electodes[1]))-gfu(mesh(0.0, 0.0, measuring_electodes[0]))))/2 # division by two because only halfsphere is present within the model
+                elif np.shape(measuring_electodes)[0] == 1:
+                    result = abs(geometric_factor * gfu(mesh(0.0, 0.0, measuring_electodes[0])))/2 # division by two because only halfsphere is present within the model
+            # Append result to results
+            results.append([rc_task[0], rc_task[1], result])
+    except:
+        results.append([rc_task[0], rc_task[1], np.nan])
 
 ## Report results to master process
 comm.gather(sendobj=results, root=0)
