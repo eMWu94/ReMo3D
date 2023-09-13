@@ -102,7 +102,8 @@ for task in iter(lambda: comm.sendrecv(None, dest=0), StopIteration):
             # Append result to results
             results.append([rc_task[0], rc_task[1], result])
     except:
-        results.append([rc_task[0], rc_task[1], np.nan])
+        for rc_task in task[2]:
+            results.append([rc_task[0], rc_task[1], np.nan])
 
 ## Report results to master process
 comm.gather(sendobj=results, root=0)
