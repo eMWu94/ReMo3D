@@ -1272,16 +1272,19 @@ def ConstructGmsh2dModel(domain_radius, tool_geometry, source_terms, formation_g
         gmsh.model.setPhysicalName(2, surface, "surf_"+str(i))
         i += 1
 
-    # Save file
+    # Save gmsh file
     gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
     gmsh.write(output_folder_path + "/fm_"+str(file_number)+".msh")
     gmsh.finalize()
     
-    if output_mode == "variable":
-        # Read file
-        mesh = ReadGmsh(output_folder_path + "/fm_"+str(file_number)+".msh", 2)
-        mesh = Mesh(mesh)
-        
+    # Read and convert gmsh file
+    mesh = ReadGmsh(output_folder_path + "/fm_"+str(file_number)+".msh", 2)
+    mesh = Mesh(mesh)
+    
+    # Save or export ngsolve file
+    if output_mode == "file":
+        mesh.Save(output_folder_path + "/fm_"+str(file_number)+".vol")    
+    elif output_mode == "variable":
         return mesh
 
 def ConstructGmsh3dModel(domain_radius, tool_geometry, source_terms, formation_geometry, dip, borehole_geometry, file_number, output_folder_path="./tmp", output_mode="variable"):
@@ -1415,14 +1418,19 @@ def ConstructGmsh3dModel(domain_radius, tool_geometry, source_terms, formation_g
     nb = gmsh.model.addPhysicalGroup(2, neumann_boundaries, 2)
     gmsh.model.setPhysicalName(2, nb , "neumann_boundary")
 
+    # Save gmsh file
     gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
     gmsh.write(output_folder_path + "/fm_"+str(file_number)+".msh")
     gmsh.finalize()
     
-    if output_mode == "variable":
-        mesh = ReadGmsh(output_folder_path + "/fm_"+str(file_number)+".msh", 3)
-        mesh = Mesh(mesh)
-        
+    # Read and convert gmsh file
+    mesh = ReadGmsh(output_folder_path + "/fm_"+str(file_number)+".msh", 3)
+    mesh = Mesh(mesh)
+    
+    # Save or export ngsolve file
+    if output_mode == "file":
+        mesh.Save(output_folder_path + "/fm_"+str(file_number)+".vol")    
+    elif output_mode == "variable":
         return mesh
 
 
@@ -1740,9 +1748,11 @@ def ConstructNetgen2dModel(domain_radius, tool_geometry, formation_geometry, bor
 
     mesh = Mesh(model_geometry.GenerateMesh(eval("meshsize." + mesh_density), maxh=mesh_size_max))
 
-    return mesh
-
-
+    if output_mode == "file":
+        mesh.Save(output_folder_path + "/fm_"+str(file_number)+".vol")
+    elif output_mode == "variable":
+        return mesh
+    
 # Ngsolve funtions
 
 def AddPointSource(f, position, fac, model_dimensionality):
