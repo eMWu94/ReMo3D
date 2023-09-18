@@ -68,20 +68,25 @@ for task in iter(lambda: comm.sendrecv(None, dest=0), StopIteration):
                 mesh = rm.ConstructGmsh2dModel(domain_radius, tool_geometry, source_terms, local_formation_geometry, local_borehole_geometry, rank, mesh_generator)
             else:
                 mesh = rm.ConstructGmsh3dModel(domain_radius, tool_geometry, source_terms, local_formation_geometry, dip, local_borehole_geometry, rank)
-            sigma = CoefficientFunction([1/mud_resistivities[depth_index]] + list(1/local_formation_resistivity)) # Conductivity distribution within the model
             dirichlet_boundary = 'dirichlet_boundary'
         # Generate mesh using netgen
         elif mesh_generator=="netgen":
             # Carve out suitable range of data
-            local_formation_geometry, local_borehole_geometry, sigma = rm.SelectNetgenDataRange(borehole_geometry, formation_parameters, mud_resistivities[depth_index], simulation_depths[depth_index], domain_radius)
+            local_formation_geometry, local_borehole_geometry, local_formation_resistivity = rm.SelectNetgenDataRange(borehole_geometry, formation_parameters,
+                                                                                                                      simulation_depths[depth_index], domain_radius)
             # Create geometry and mesh
             mesh = rm.ConstructNetgen2dModel(domain_radius, tool_geometry, local_formation_geometry, local_borehole_geometry, source_terms)
             dirichlet_boundary = [2]
 
         ## Solve BVP
+        # Convert mesh to ngsolve format
+        mesh = Mesh(mesh) 
+        # Prepare conductivity values
+        sigma = CoefficientFunction([1/mud_resistivities[depth_index]] + list(1/local_formation_resistivity)) # Conductivity distribution within the model
+        # Solve system of equations
         fes, gfu = rm.SolveBVP(mesh, sigma, tool_geometry, source_terms, dirichlet_boundary, preconditioner, condense)
 
-        ## Compute measured resistivity
+        ## Compute measured resistivity values
         for rc_task in task[2]:
             tool = list(tools_parameters.keys())[rc_task[1]]
             depth = rc_task[0]
