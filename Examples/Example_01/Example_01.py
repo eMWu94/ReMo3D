@@ -6,7 +6,6 @@
    How to run:
    mpiexec python3 Example_01.py
 """
-
 import remo3d as rm
 import numpy as np
 

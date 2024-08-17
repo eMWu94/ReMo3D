@@ -6,7 +6,6 @@
    How to run:
    mpiexec python3 Example_02.py
 """
-
 import remo3d as rm
 import numpy as np
 
@@ -25,7 +24,8 @@ model_parameters = rm.SetModelParameters(formation_model_file, borehole_model_fi
 
 # Compute synthetic logs
 logs = rm.ComputeSyntheticLogs(tools_parameters, model_parameters, measurement_depths,
-                               domain_radius=50, processes=12, mesh_generator="netgen")
+                               domain_radius=50, processes=12, mesh_generator="netgen",
+                               force_single_electrode_configuration=True, batch_size=10)
 
 # Save results
 output_folder = "./Output" # path to output folder
