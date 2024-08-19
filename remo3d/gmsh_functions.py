@@ -479,21 +479,18 @@ def ConstructGmsh2dModel(domain_radius, tool_geometry, source_terms, formation_g
 
     gmsh.model.mesh.field.add("MathEval", 1) # Horizontal, linear meshsize field
     gmsh.model.mesh.field.setString(1, "F", "x + 0.1")
-
+    fields = [1]
+    
     i = 2
     for electrode_position in tool_geometry[source_terms != 0]:
         gmsh.model.mesh.field.add("MathEval", i) # Meshsize field modification near current electrodes
         gmsh.model.mesh.field.setString(i, "F","(x^2 + (y+({}))^2)/2 + 0.01".format(electrode_position))
+        fields.append(i)
         i += 1
-
-    if np.shape(tool_geometry[source_terms != 0])[0]==1:
-        gmsh.model.mesh.field.add("Min", 3)
-        gmsh.model.mesh.field.setNumbers(3, "FieldsList", [1,2])
-        gmsh.model.mesh.field.setAsBackgroundMesh(3)
-    else:
-        gmsh.model.mesh.field.add("Min", 4)
-        gmsh.model.mesh.field.setNumbers(4, "FieldsList", [1,2,3])
-        gmsh.model.mesh.field.setAsBackgroundMesh(4)
+        
+    gmsh.model.mesh.field.add("Min", i)
+    gmsh.model.mesh.field.setNumbers(i, "FieldsList", fields)
+    gmsh.model.mesh.field.setAsBackgroundMesh(i)
     
     gmsh.option.setNumber("Mesh.Algorithm", 6)
     gmsh.model.mesh.generate(2)
@@ -623,21 +620,18 @@ def ConstructGmsh3dModel(domain_radius, tool_geometry, source_terms, formation_g
 
     gmsh.model.mesh.field.add("MathEval", 1) # Horizontal, linear meshsize field
     gmsh.model.mesh.field.setString(1, "F", "(x^2 + y^2)^0.5 + 0.1")
-
+    fields = [1]
+    
     i = 2
     for electrode_position in tool_geometry[source_terms != 0]:
-        gmsh.model.mesh.field.add("MathEval", i) # Distance from the electrode
-        gmsh.model.mesh.field.setString(i, "F","(x^2 + y^2 + (z+({}))^2)/2 + 0.01".format(electrode_position))
+        gmsh.model.mesh.field.add("MathEval", i) # Meshsize field modification near current electrodes
+        gmsh.model.mesh.field.setString(i, "F","(x^2 + (y+({}))^2)/2 + 0.01".format(electrode_position))
+        fields.append(i)
         i += 1
-
-    if np.shape(tool_geometry[source_terms != 0])[0]==1:
-        gmsh.model.mesh.field.add("Min", 3)
-        gmsh.model.mesh.field.setNumbers(3, "FieldsList", [1,2])
-        gmsh.model.mesh.field.setAsBackgroundMesh(3)
-    else:
-        gmsh.model.mesh.field.add("Min", 4)
-        gmsh.model.mesh.field.setNumbers(4, "FieldsList", [1,2,3])
-        gmsh.model.mesh.field.setAsBackgroundMesh(4)
+        
+    gmsh.model.mesh.field.add("Min", i)
+    gmsh.model.mesh.field.setNumbers(i, "FieldsList", fields)
+    gmsh.model.mesh.field.setAsBackgroundMesh(i)
 
     gmsh.option.setNumber("Mesh.Algorithm", 5)
     gmsh.model.mesh.generate(3)
