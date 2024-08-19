@@ -3,7 +3,7 @@
 import numpy as np
 import ngsolve as ngs
 
-ngs.ngsglobals.msg_level=0
+#ngs.ngsglobals.msg_level=0
 
 # Ngsolve funtions
 
@@ -19,7 +19,6 @@ def AddPointSource(f, position, fac, model_dimensionality):
         shape = fel.CalcShape(*mp.pnt)
         for d,s in zip(dnums, shape):
             f.vec[d] += fac*s
-
 
 def SolveBVP(mesh, sigma, tool_geometry, source_terms, dirichlet_boundary, preconditioner, condense):
 
