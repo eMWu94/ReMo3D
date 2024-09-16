@@ -139,7 +139,7 @@ def SetModelParameters(formation_model_file, borehole_model_file, borehole_geome
     model_parameters = [formation_parameters, borehole_parameters, dip]
     return model_parameters
 
-def ComputeSyntheticLogs(tools_parameters, model_parameters, measurement_depths, force_single_electrode_configuration=True, domain_radius=50, processes=4, batch_size=5, mesh_generator="auto", preconditioner="multigrid", condense=True):
+def ComputeSyntheticLogs(tools_parameters, model_parameters, measurement_depths, force_single_electrode_configuration=True, domain_radius=50, cpu_processes=4, gpu_processes=0, batch_size=5, mesh_generator="auto", preconditioner="multigrid", condense=True):
     """
     This function computes syntetic logs.
 
@@ -164,12 +164,18 @@ def ComputeSyntheticLogs(tools_parameters, model_parameters, measurement_depths,
         A radius of simulation domain in meters.
         By default set to 50.
 
-    processes: int, optional
-        Specify a number of processes. Minimal value that can be set is 2.
+    cpu_processes: int, optional
+        Specify a number of processes that will solve the equations on cpu minus one reserved for the main process. Minimal value that can be set is 1,
+        however a minimal combined number of cpu and gpu processes is 2.
         By default set to 4.
+        
+    gpu_processes: int, optional
+        Specify a number of processes that will solve the equations on gpu. Minimal value that can be set is 0,
+        however a minimal combined number of cpu and gpu processes is 2. 
+        By default set to 0.
     
     batch_size: int, optional
-        Specify a number of measurement points that are joined into a single mesh generation and simulation procedure to speed up the process.
+        Specify a number of adjacent measurement points that are joined into a single mesh generation and simulation procedure to speed up the process.
         By default set to 5.    
     
     mesh_generator: string, optional
@@ -363,13 +369,27 @@ def ComputeSyntheticLogs(tools_parameters, model_parameters, measurement_depths,
     # Mud resistivities at simulation depths
     mud_resistivities = np.interp(simulation_depths, borehole_parameters[:,0], borehole_parameters[:,2])
     
+    # ## Check GPU availability
+    if gpu_processes > 0:
+        try:
+            import ngsolve.ngscuda
+        except:
+            print ("No CUDA library or device available. The number of gpu processes is set to 0")
+            gpu_processes = 0    
+    
     ## Specify number of workers
-    if type(processes) != int:
-        raise ValueError("The number of processes have to be intager")
-    if processes < 2:
-        raise ValueError("Minimal number of processes is 2")
+    if type(cpu_processes) != int or type(gpu_processes) != int:
+        raise ValueError("The number of processes have to be an intager")
+    if cpu_processes < 1:
+        raise ValueError("Minimal number of cpu processes is 1")
+    if gpu_processes < 0:
+        raise ValueError("Minimal number of gpu processes is 0")    
+    if cpu_processes + gpu_processes < 2:
+        raise ValueError("Minimal combined number of cpu processes and gpu processes is 2")      
 
-    n_workers = processes - 1 # one process is reserved for the main
+    n_workers = cpu_processes + gpu_processes - 1 # one process is reserved for the main
+
+    solve_on = ["CPU"]*(cpu_processes-1) + ["GPU"]*gpu_processes
 
     ## Spawn workers
     comm = MPI.COMM_WORLD.Spawn(
@@ -394,7 +414,8 @@ def ComputeSyntheticLogs(tools_parameters, model_parameters, measurement_depths,
     comm.bcast(preconditioner, root=MPI.ROOT)
     comm.bcast(condense, root=MPI.ROOT)
     comm.bcast(task_list, root=MPI.ROOT)
-
+    comm.bcast(solve_on, root=MPI.ROOT)
+    
     ## Wait for all workers to receive data
     comm.barrier()
 
@@ -444,6 +465,7 @@ def ComputeSyntheticLogs(tools_parameters, model_parameters, measurement_depths,
     print('\nProcessed in: ', datetime.datetime.now() - start_time)
 
     return logs
+
 
 
 def SaveResults(model_parameters, measurement_results, output_folder=None, measurements_to_save="auto", plot_layout="auto", plot_depth_lim="auto", plot_aspect_ratio="auto", model_rad_lim="auto", model_res_lim="auto", logs_res_lim="auto", logs_at_nan="break", logs_interpolation_factor=1, logs_colours="auto"):

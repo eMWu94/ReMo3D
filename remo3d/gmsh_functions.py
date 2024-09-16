@@ -5,10 +5,7 @@ import numpy as np
 import scipy.interpolate as spi
 import netgen.meshing as msh
 
-import ngsolve as ngs
-
 # GMSH functions
-
 
 def SelectGmshBoreholeDataRange(borehole_geometry, dip, simulation_depth, domain_radius):
     
@@ -166,6 +163,16 @@ def SelectGmshFormationDataRange(formation_parameters, dip, simulation_depth, do
     elif np.shape(formation_parameters)[1]==3:
         ## If resistivity data are not present return information about model geometry
         return (local_formation_model)
+
+    
+def SelectGmshDataRange(borehole_geometry, formation_parameters, dip, mud_resistivity, simulation_depth, domain_radius, active_geometry_window=0.99):
+
+    local_borehole_geometry = SelectGmshBoreholeDataRange(borehole_geometry, dip, simulation_depth, domain_radius)
+    local_formation_geometry, local_formation_resistivity = SelectGmshFormationDataRange(formation_parameters, dip, simulation_depth, domain_radius, active_geometry_window)          
+    sigma = [1/mud_resistivity] + list(1/local_formation_resistivity)
+    
+    return local_formation_geometry, local_borehole_geometry, sigma
+
 
 def ReadGmsh(filename, mesh_dimensionality):
     """
@@ -374,7 +381,7 @@ def ReadGmsh(filename, mesh_dimensionality):
                     mesh.Add(msh.Element3D(index, [nodenums2[i] for i in ordering]))
     return mesh
 
-def ConstructGmsh2dModel(domain_radius, tool_geometry, source_terms, formation_geometry, borehole_geometry, file_number, mesh_generator, output_folder_path="./tmp", output_mode="variable"):
+def ConstructGmsh2dModel(domain_radius, tool_geometry, source_terms, formation_geometry, borehole_geometry, file_number, output_folder_path="./meshfiles", output_mode="variable"):
 
     ### GMSH test
     gmsh.initialize()
@@ -522,17 +529,19 @@ def ConstructGmsh2dModel(domain_radius, tool_geometry, source_terms, formation_g
 
     # Save file
     gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
-    gmsh.write(output_folder_path + "/fm_"+str(file_number)+".msh")
+    gmsh.write("./tmp/fm_"+str(file_number)+".msh")
     gmsh.finalize()
     
-    if output_mode == "variable":
-        # Read file
-        mesh = ReadGmsh(output_folder_path + "/fm_"+str(file_number)+".msh", 2)
-        mesh = ngs.Mesh(mesh)
-        
+    # Read file and convert to netgen format
+    mesh = ReadGmsh("./tmp/fm_"+str(file_number)+".msh", 2)   
+    
+    # Save or return mesh
+    if output_mode == "file":
+        mesh.Save(output_folder_path + "/fm_"+str(file_number)+".msh")
+    elif output_mode == "variable":
         return mesh
 
-def ConstructGmsh3dModel(domain_radius, tool_geometry, source_terms, formation_geometry, dip, borehole_geometry, file_number, output_folder_path="./tmp", output_mode="variable"):
+def ConstructGmsh3dModel(domain_radius, tool_geometry, source_terms, formation_geometry, dip, borehole_geometry, file_number, output_folder_path="./meshfiles", output_mode="variable"):
 
     ### GMSH test
     gmsh.initialize()
@@ -660,12 +669,16 @@ def ConstructGmsh3dModel(domain_radius, tool_geometry, source_terms, formation_g
     nb = gmsh.model.addPhysicalGroup(2, neumann_boundaries, 2)
     gmsh.model.setPhysicalName(2, nb , "neumann_boundary")
 
+    # Save file
     gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
-    gmsh.write(output_folder_path + "/fm_"+str(file_number)+".msh")
+    gmsh.write("./tmp/fm_"+str(file_number)+".msh")
     gmsh.finalize()
     
-    if output_mode == "variable":
-        mesh = ReadGmsh(output_folder_path + "/fm_"+str(file_number)+".msh", 3)
-        mesh = ngs.Mesh(mesh)
-        
+    # Read file and convert to netgen format
+    mesh = ReadGmsh("./tmp/fm_"+str(file_number)+".msh", 3)   
+    
+    # Save or return mesh
+    if output_mode == "file":
+        mesh.Save(output_folder_path + "/fm_"+str(file_number)+".msh")
+    elif output_mode == "variable":
         return mesh

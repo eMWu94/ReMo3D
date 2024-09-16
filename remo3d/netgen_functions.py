@@ -7,11 +7,9 @@ from netgen.csg import *
 from netgen.geom2d import SplineGeometry
 from netgen.meshing import MeshingParameters, meshsize
 
-import ngsolve as ngs
+# Netgen functions
 
-# # Netgen functions
-
-def SelectNetgenDataRange(borehole_geometry, formation_parameters, mud_resistivity, simulation_depth, domain_radius, active_geometry_window=0.99):
+def SelectNetgenDataRange(borehole_geometry, formation_parameters, mud_resistivity, simulation_depth, domain_radius, active_geometry_window=0.999):
 
     def domain_line_intersection (p1, p2, radius, side):
         x_1, y_1 = p1[1], p1[0]
@@ -29,7 +27,7 @@ def SelectNetgenDataRange(borehole_geometry, formation_parameters, mud_resistivi
                 return np.array([y, x])
             elif side=="bottom" and y>0 and np.dot(p1-p2, p1-p)> 0 and np.dot(p1-p2, p1-p)<np.dot(p1-p2, p1-p2):
                 return np.array([y, x])
-
+            
     ### Borehole geometry
     ## Select data relevant to construct model geometry within simulation domain
     if np.shape(borehole_geometry)[0]==2:
@@ -59,17 +57,16 @@ def SelectNetgenDataRange(borehole_geometry, formation_parameters, mud_resistivi
     # else if point is within the domain add additional point on domain boundary
     elif local_borehole_geometry[-1, 0]**2 + local_borehole_geometry[-1, 1] < domain_radius**2:
         omega = np.arccos(local_borehole_geometry[-1, 1]/domain_radius)
-        local_borehole_geometry = np.vstack((local_borehole_geometry, np.array([np.sin(omega)*domain_radius, local_borehole_geometry[0, 1]])))
+        local_borehole_geometry = np.vstack((local_borehole_geometry, np.array([np.sin(omega)*domain_radius, local_borehole_geometry[-1, 1]])))
     # else if point is outside the domain move it on the domain boundary
     elif local_borehole_geometry[-1, 0]**2 + local_borehole_geometry[-1, 1] > domain_radius**2:
         local_borehole_geometry[-1,:] = domain_line_intersection(local_borehole_geometry[-1, :], local_borehole_geometry[-2, :], domain_radius, side="bottom")
 
     ### Formation geometry
-
     ## Compute active geometry radius 
     # Active geometry prevents occurence of thin layers and small wedges at the very edge of simulation by ignoring occurence of small elements of model at the very edge of simulation domain
     active_geometry_radius = domain_radius * active_geometry_window 
-
+    
     ## Select data relevant to construct model geometry within simulation domain
     # Raw cut of relevant data\
     point_within = np.any((formation_parameters[:,:2]-simulation_depth)**2 <= active_geometry_radius**2, axis=1)
@@ -116,11 +113,11 @@ def SelectNetgenDataRange(borehole_geometry, formation_parameters, mud_resistivi
     formation_resistivity_distribution = np.ndarray.flatten(local_formation_model[:,3:5])
     formation_resistivity_distribution = formation_resistivity_distribution[~np.isnan(formation_resistivity_distribution)]
 
-    local_conductivity_distribution = ngs.CoefficientFunction([1/mud_resistivity] + list(1/formation_resistivity_distribution)) # Conductivity within different parts of model
+    local_conductivity_distribution = [1/mud_resistivity] + list(1/formation_resistivity_distribution) # Conductivity within different parts of model
 
     return (local_formation_geometry, local_borehole_geometry, local_conductivity_distribution)
 
-def ConstructNetgen2dModel(domain_radius, tool_geometry, formation_geometry, borehole_geometry, source_terms):
+def ConstructNetgen2dModel(domain_radius, tool_geometry, source_terms, formation_geometry, borehole_geometry, file_number=None, output_folder_path="./meshfiles", output_mode="variable"):
 
     mesh_size_min = 0.001
     mesh_size_max = 10
@@ -194,6 +191,7 @@ def ConstructNetgen2dModel(domain_radius, tool_geometry, formation_geometry, bor
     # Select existing points lying at the domain_boundary and convert them to polar coordinates
     existing_points_at_domain_boundary = points[np.isclose(points[:, 1]**2 + points[:, 2]**2, domain_radius**2),:]
     existing_points_at_domain_boundary = existing_points_at_domain_boundary[np.argsort(existing_points_at_domain_boundary[:,2]),:]
+    #print(np.round(existing_points_at_domain_boundary, 4))
 
     existing_points_at_domain_boundary[0,2] = np.arctan(-np.inf)
     existing_points_at_domain_boundary[-1,2] = np.arctan(np.inf)
@@ -202,6 +200,7 @@ def ConstructNetgen2dModel(domain_radius, tool_geometry, formation_geometry, bor
 
     # Add points to follow circular shape of simulation domain
     angles_betweeen_existing_points = existing_points_at_domain_boundary[1:,2]-existing_points_at_domain_boundary[:-1,2]
+    #print(np.round(angles_betweeen_existing_points, 4))
     points_to_add = np.floor(angles_betweeen_existing_points/(9*np.pi/180)).astype(int) # number of points that will be added between existing points
 
     starting_index = index_0D
@@ -300,7 +299,13 @@ def ConstructNetgen2dModel(domain_radius, tool_geometry, formation_geometry, bor
             else:
                 areas_next_to_domain_boundary.append(formation_geometry[i,4])
     areas_next_to_domain_boundary.append(1)
-
+    
+    # print(np.round(borehole_geometry[:3,:], 4))
+    # print("...")
+    # print(np.round(borehole_geometry[-3:,:], 4))
+    # print(areas_next_to_domain_boundary, points_to_add+1)
+    # print(len(areas_next_to_domain_boundary), len(points_to_add+1))
+    # print()
     areas_next_to_domain_boundary = np.repeat(areas_next_to_domain_boundary, points_to_add+1)
     lines_at_domain_boundary = np.vstack((np.arange(number_of_lines) + index_1D, points_at_domain_boundary[:-1,0], points_at_domain_boundary[1:,0], np.ones(np.shape(points_at_domain_boundary[1:,0]))+1, np.array(areas_next_to_domain_boundary), np.zeros(np.shape(points_at_domain_boundary[1:,0])))).T
     lines = np.vstack([lines, lines_at_domain_boundary])
@@ -321,6 +326,10 @@ def ConstructNetgen2dModel(domain_radius, tool_geometry, formation_geometry, bor
     for p1,p2,bc,left,right in lines:
         model_geometry.Append( ["line", pnums[p1], pnums[p2]], bc=bc, leftdomain=left, rightdomain=right)
 
-    mesh = ngs.Mesh(model_geometry.GenerateMesh(eval("meshsize." + mesh_density), maxh=mesh_size_max))
+    mesh = model_geometry.GenerateMesh(eval("meshsize." + mesh_density), maxh=mesh_size_max)
 
-    return mesh
+    # Save or return mesh
+    if output_mode == "file":
+        mesh.Save(output_folder_path + "/fm_"+str(file_number)+".msh")
+    elif output_mode == "variable":
+        return mesh

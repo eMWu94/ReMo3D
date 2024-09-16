@@ -40,6 +40,7 @@ mesh_generator = str()
 preconditioner = str()
 condense = bool()
 task_list = list()
+solve_on = list()
 
 # Fill variables with data
 comm.Bcast([formation_parameters, MPI.FLOAT], root=0)
@@ -53,6 +54,13 @@ mesh_generator = comm.bcast(mesh_generator, root=0)
 preconditioner = comm.bcast(preconditioner, root=0)
 condense = comm.bcast(condense, root=0)
 task_list = comm.bcast(task_list, root=0)
+solve_on = comm.bcast(solve_on, root=0)
+
+# Import ngsolve functions
+if solve_on[rank] == "CPU":
+    import ngsolve_functions as ngsf
+elif solve_on[rank] == "GPU":
+    import ngsolve_functions_gpu as ngsf
 
 ## Wait for all workers to receive data
 comm.barrier()
@@ -67,35 +75,37 @@ for msg in iter(lambda: comm.sendrecv(None, dest=0), StopIteration):
         tool_geometry = tool[0,:]
         source_terms = tool[1,:]
 
-        ## Generate mesh
-        # Generate mesh using gmsh
         if mesh_generator=="gmsh":
             # Carve out suitable range of data
-            local_borehole_geometry = gmf.SelectGmshBoreholeDataRange(borehole_geometry, dip, simulation_depths[depth_index], domain_radius)
-            local_formation_geometry, local_formation_resistivity = gmf.SelectGmshFormationDataRange(formation_parameters, dip, simulation_depths[depth_index], domain_radius)          
+            local_formation_geometry, local_borehole_geometry, sigma = gmf.SelectGmshDataRange(borehole_geometry, formation_parameters, dip, mud_resistivities[depth_index], simulation_depths[depth_index], domain_radius)
             # Create geometry and mesh
             if dip==0:
                 mesh = gmf.ConstructGmsh2dModel(domain_radius, tool_geometry, source_terms, local_formation_geometry, local_borehole_geometry, rank, mesh_generator)
             else:
                 mesh = gmf.ConstructGmsh3dModel(domain_radius, tool_geometry, source_terms, local_formation_geometry, dip, local_borehole_geometry, rank)
-            sigma = ngs.CoefficientFunction([1/mud_resistivities[depth_index]] + list(1/local_formation_resistivity)) # Conductivity distribution within the model
             dirichlet_boundary = 'dirichlet_boundary'
         # Generate mesh using netgen
         elif mesh_generator=="netgen":
             # Carve out suitable range of data
             local_formation_geometry, local_borehole_geometry, sigma = ngf.SelectNetgenDataRange(borehole_geometry, formation_parameters, mud_resistivities[depth_index], simulation_depths[depth_index], domain_radius)
             # Create geometry and mesh
-            mesh = ngf.ConstructNetgen2dModel(domain_radius, tool_geometry, local_formation_geometry, local_borehole_geometry, source_terms)
+            mesh = ngf.ConstructNetgen2dModel(domain_radius, tool_geometry, source_terms, local_formation_geometry, local_borehole_geometry)
             dirichlet_boundary = [2]
+
+        # Convert data to ngsolve format
+        mesh = ngs.Mesh(mesh)
+        sigma = ngs.CoefficientFunction(sigma)
 
         ## Compute measured resistivity
         for modelling_task in task[2]:
             tool = modelling_task[1]
             tool_geometry = tool[0,:]
             source_terms = tool[1,:]
+
             ## Solve BVP
             fes, gfu = ngsf.SolveBVP(mesh, sigma, tool_geometry, source_terms, dirichlet_boundary, preconditioner, condense)        
 
+            # Compute resistivity values
             for rc_task in modelling_task[2]:
                 depth = rc_task[0]
                 tool = list(tools_parameters.keys())[rc_task[1]]

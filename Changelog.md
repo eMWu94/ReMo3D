@@ -1,3 +1,7 @@
+# 1.2.0
+ - Conversion of data into ngsolve format is now done within the worker, not within netgen and gmsh functions.
+ - Output format of netgen and gmsh functions is now standardized.
+ 
 # 1.1.0
  - Package restructuring - splitting remo3d.py file into remo3d.py, gmsh_functions.py, netgen_functions.py and ngsolve_functions.py files.
  - If all simulated tools are in one current electrode configuration all measurements, where the current electrode is located at the same point are computed simultaneously in a a single mesh generation and simulation procedure to speed up the process.
