@@ -1,3 +1,7 @@
+# 1.3.0
+ - Conversion of the main part of the code to classes.
+ - Spliting initialization, log computation and shutdown of workers into separate functions (done with the intention to better adapt the code to the purpuse of use within inversion algorithms where simulations are performed multiple times within a procedure).
+ 
 # 1.2.0
  - Conversion of data into ngsolve format is now done within the worker, not within netgen and gmsh functions.
  - Output format of netgen and gmsh functions is now standardized.

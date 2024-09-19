@@ -6,7 +6,8 @@
    How to run:
    mpiexec python3 Example_01.py
 """
-import remo3d as rm
+
+from remo3d import Model
 import numpy as np
 
 # Specify input data
@@ -15,16 +16,9 @@ formation_model_file = "./Input/Formation.txt" # path to file with formation par
 borehole_model_file = "./Input/Borehole.txt" # path to file with borehole parameters
 measurement_depths = np.arange(0, 25.1, 0.1) # measurement points
 
-# Set tools parameters
-tools_parameters = rm.SetToolsParameters(tools)
-
-# Set model parameters
-model_parameters = rm.SetModelParameters(formation_model_file, borehole_model_file)
-
-# Compute synthetic logs
-logs = rm.ComputeSyntheticLogs(tools_parameters, model_parameters, measurement_depths)
+# Create model and simulate logs
+model = Model.compute_synthetic_logs(tools, measurement_depths, formation_model_file, borehole_model_file)
 
 # Save results
-output_folder = "./Output" # path to output folder
-rm.SaveResults(model_parameters, logs, output_folder=output_folder)
+model.save_results(output_folder="./Output")
 

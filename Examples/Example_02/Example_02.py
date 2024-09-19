@@ -6,7 +6,8 @@
    How to run:
    mpiexec python3 Example_02.py
 """
-import remo3d as rm
+
+from remo3d import Model
 import numpy as np
 
 # Specify input data
@@ -15,23 +16,14 @@ formation_model_file = "./Input/Formation.txt" # path to file with formation par
 borehole_model_file = "./Input/Borehole.txt" # path to file with borehole parameters
 measurement_depths = np.arange(0, 25.1, 0.1) # measurement points
 
-# Set tools parameters
-tools_parameters = rm.SetToolsParameters(tools)
-
-# Set model parameters
-model_parameters = rm.SetModelParameters(formation_model_file, borehole_model_file,
-                                         borehole_geometry='diameter', dip=0)
-
-# Compute synthetic logs
-logs = rm.ComputeSyntheticLogs(tools_parameters, model_parameters, measurement_depths,
-                               domain_radius=50, processes=12, mesh_generator="netgen",
-                               force_single_electrode_configuration=True, batch_size=10)
+# Create model and simulate logs
+model = Model.compute_synthetic_logs(tools, measurement_depths, formation_model_file, borehole_model_file, borehole_geometry_type='diameter', dip=0,
+                                     cpu_workers=11, gpu_workers=0, mesh_generator="netgen", domain_radius=25, batch_size=10)
 
 # Save results
-output_folder = "./Output" # path to output folder
-rm.SaveResults(model_parameters, logs, output_folder=output_folder,
+model.save_results(output_folder="./Output",
                plot_layout=[["B5.7A0.4M", "B4.48A1.62M"], ["M1.0A0.1B", "A2.0M0.5N", "N0.5M2.0A", "M4.0A0.5B"]],
                plot_depth_lim=[0, 25], plot_aspect_ratio=1.25,
                model_rad_lim=[-1, 1], model_res_lim=[0, 20],
                logs_colours = [["red", "blue"], ["green", "orange", "purple", "deepskyblue"]],
-               logs_res_lim=[0, 30], logs_at_nan="continue")
+               logs_res_lim=[0, 30], logs_at_nan="break")
