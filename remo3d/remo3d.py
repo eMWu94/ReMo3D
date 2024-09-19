@@ -37,7 +37,8 @@ class Model():
             the top one to the bottom one and 2 numbers that specifies distances in meters between
             consecutive electrodes.
             Example: tools = ["N2.5M0.25A", "B5.7A0.4M"]
-        force_single_electrode_configuration: bool
+            
+        force_single_electrode_configuration: bool, optional
             Specifies if two-electrode tool configurations will be changed to equivalent single-electrode tool configurations.
             Enables faster computations. Can be set to True or False.
             By default set to True.
@@ -59,6 +60,7 @@ class Model():
         # Initialize results atributes
         self.logs = None
 
+    
     # Complete modelling procedure
     @classmethod
     def compute_synthetic_logs(
@@ -81,20 +83,95 @@ class Model():
         condense=True):
         """
         This function performs complete moddeling procedure.
+        
+        Parameters
+        ----------   
+        tools: list
+            A list of tools. Names are strings and have to consist of symbols of 3 different electrods
+            (A and/or B for current electrodes and M and/or N for measuring electrodes) listed from
+            the top one to the bottom one and 2 numbers that specifies distances in meters between
+            consecutive electrodes.
+            Example: tools = ["N2.5M0.25A", "B5.7A0.4M"]
+            
+        measurement_depths: array
+            A 1D numpy array of depths of simulated measurements.
+            Values have to be given in ascending order and corespond to depths of the model.
+            
+        formation_model: str or array
+            A string that specifies path to file that stores parameters of the formation model
+            or an array of formation model parameters (in this case dimentions have to be in meters).
+            
+        borehole_model: str or array
+            A string that specifies path to file that stores parameters of the  borehole model
+            or an array of borehole model parameters (in this case dimentions have to be in meters).
+            
+        force_single_electrode_configuration: bool, optional
+            Specifies if two-electrode tool configurations will be changed to equivalent single-electrode tool configurations.
+            Enables faster computations. Can be set to True or False.
+            By default set to True.            
+            
+        formation_units: list, optional
+            Three element list that specifies units of formation model diameters (tops and bottoms of boundaries and diameters of filtration zones).
+            Example: ["M", "MM", "FT"]
+            
+        borehole_geometry_type: str, optional
+            A string that specifies type of borehole geometry. Available options: "diameter" and "radius".
+            By default set to "diameter". 
+            
+        borehole_units: list, optional
+            Two element list that specifies units of borehole model diameters (depths and diameters or radii).
+            Example: ["M", "MM"]        
+            
+        dip: float, optional
+            A value between 0 and 90. Describes dip of the layers in relation to the borehole axis.
+            By default set to 0.
+            
+        cpu_workers: int, optional
+            Specify a number of processes that will solve the equations on cpu minus one reserved for the main process. Minimal value that can be set is 1,
+            however a minimal combined number of cpu and gpu processes is 2.
+            By default set to 4.
+            
+        gpu_workers: int, optional
+            Specify a number of processes that will solve the equations on gpu. Minimal value that can be set is 0,
+            however a minimal combined number of cpu and gpu processes is 2. 
+            By default set to 0.            
+            
+        domain_radius: float, optional
+            A radius of simulation domain in meters.
+            By default set to 50.
+
+        batch_size: int, optional
+            Specify a number of adjacent measurement points that are joined into a single mesh generation and simulation procedure to speed up the process.
+            By default set to 5.    
+
+        mesh_generator: string, optional
+            Specify utiliezed mesh generator. Can be set to "gmsh" or "netgen" for 2D models and to "gmsh" for 3D models.
+            By default set to "auto" and will chose "netgen" for 2D models and "gmsh" for 3D models.
+
+        preconditioner: string, optional
+            Specify a type of utilized preconditioner. Available options: "local" and "multigrid".
+            By default set to "multigrid".
+
+        condense: bool, optional
+            Specify if static condensation will be utilized to eliminate unknowns that are internal to elements from the global linear system.
+            By default set to True.            
+            
+        Returns
+        -------
+        model: Model
+            An instance of the Model class containing all data related to performed modelling procedure.
         """
+        model = cls(tools, force_single_electrode_configuration=force_single_electrode_configuration)
+
+        model.set_model_parameters(formation_model, borehole_model, borehole_geometry_type=borehole_geometry_type, dip=dip)
+
+        model.initialize_workers(cpu_workers=cpu_workers, gpu_workers=gpu_workers)
+
+        model.simulate_logs(measurement_depths, domain_radius=domain_radius, batch_size=batch_size, mesh_generator=mesh_generator, preconditioner=preconditioner, condense=condense)
+
+        model.shutdown_workers()
         
-        # Simulate logs
-        simulation = cls(tools, force_single_electrode_configuration=force_single_electrode_configuration)
-
-        simulation.set_model_parameters(formation_model, borehole_model, borehole_geometry_type=borehole_geometry_type, dip=dip)
-
-        simulation.initialize_workers(cpu_workers=cpu_workers, gpu_workers=gpu_workers)
-
-        simulation.simulate_logs(measurement_depths, domain_radius=domain_radius, batch_size=batch_size, mesh_generator=mesh_generator, preconditioner=preconditioner, condense=condense)
-
-        simulation.shutdown_workers()
-        
-        return simulation
+        return model
 
     
     # Functions associated with setting logging tools parameters  
@@ -103,23 +180,23 @@ class Model():
         This function sets logging tools parameters based on their names.
 
         Parameters
-        -------
+        ----------   
         tools: list
             A list of tools. Names are strings and have to consist of symbols of 3 different electrods
             (A and/or B for current electrodes and M and/or N for measuring electrodes) listed from
             the top one to the bottom one and 2 numbers that specifies distances in meters between
             consecutive electrodes.
             Example: tools = ["N2.5M0.25A", "B5.7A0.4M"]
-        force_single_electrode_configuration: bool
+        force_single_electrode_configuration: bool, optional
             Specifies if two-electrode tool configurations will be changed to equivalent single-electrode tool configurations.
             Enables faster computations. Can be set to True or False.
             By default set to True.
+        
         Returns
         -------
         tools_parameters: dict
             A dictionary of numpy arrays that specify parameters of logging tools.
         """
-
         ### Check if data format is correct
         if type(tools)!=list or all(isinstance(s, str) for s in tools)==False:
             raise ValueError("Tools names have to be provided in the form of list of strings")
@@ -154,6 +231,21 @@ class Model():
     def _set_tool_parameters(self, tool, electrodes, distances):
         """
         This function is constructing single tool parameters.
+        
+        Parameters
+        ----------
+        tool: str
+        
+        electrodes: tuple
+            Tuple that contains symbols of electrodes.
+            
+        distances: list
+            List that specifies distances between electrodes.
+
+        Returns
+        -------
+        tool_parameters: numpy.ndarray
+            An array containing all tool parameters.
         """
 
         # Check if tool configuration is correct and set electrodes position in relation to measurment point position
@@ -231,7 +323,16 @@ class Model():
                 
     def _str2float(self, item):
         """
-        This function converts item from strings to floats (if possible).
+        This function converts items from strings to floats (if possible).
+        
+        Parameters
+        ----------
+        item: str
+            Item to convert
+        
+        Returns:
+        item: float or str
+            Item returned as float if conversion was possible or as str if conversion is not possible.
         """
         try:
             return float(item)
@@ -246,10 +347,10 @@ class Model():
         
         Parameters
         ----------
-        formation_model: str or array
+        formation_model: str or numpy.ndarray
             A string that specifies path to file that stores parameters of the formation model
             or an array of formation model parameters (in this case dimentions have to be in meters).
-        borehole_model: str or array
+        borehole_model: str or numpy.ndarray
             A string that specifies path to file that stores parameters of the  borehole model
             or an array of borehole model parameters (in this case dimentions have to be in meters).
         borehole_geometry_type: str, optional
@@ -287,8 +388,8 @@ class Model():
 
         Returns
         -------
-        formation_parameters: array
-            A numpy array of formation parameters with dimentions converted to meters.
+        formation_parameters: numpy.ndarray
+            An array of formation parameters with dimentions converted to meters.
         """
         # Formation data
         formation_data = np.atleast_2d(np.loadtxt(formation_model_file, delimiter="\t", skiprows=2))
@@ -303,7 +404,23 @@ class Model():
     
     
     def set_formation_parameters(self, formation_parameters, formation_units=["M", "M", "M"]):
-
+        """
+        This functions sets formation parameters, converts dimentions to meters and checks if all parameters are correct.
+        
+        Parameters
+        ----------
+        formation_parameters: numpy.ndarray
+            An array of formation parameters.
+            
+        formation_units: list, optional
+            Three element list that specifies units of formation model diameters (tops and bottoms of boundaries and diameters of filtration zones).
+            Example: ["M", "MM", "FT"]
+            
+        Returns
+        -------
+        formation_parameters: numpy.ndarray
+            An array of borehole parameters with dimentions converted to meters.
+        """
         # Formation geometry
         for i in range(len(formation_units)):
             if formation_units[i] in self.conversion_table.keys():
@@ -335,8 +452,8 @@ class Model():
             
         Returns
         -------
-        formation_parameters: array
-            A numpy array of borehole parameters with dimentions converted to meters.
+        borehole_parameters: numpy.ndarray
+            An array of borehole parameters with dimentions converted to meters.
         """
         # Borehole data
         borehole_data = np.atleast_2d(np.loadtxt(borehole_model_file, delimiter="\t", skiprows=2))
@@ -351,7 +468,27 @@ class Model():
         
         
     def set_borehole_parameters(self, borehole_parameters, borehole_geometry_type='diameter', borehole_units=["M", "M"]):
-
+        """
+        This functions sets borehole parameters, converts dimentions to meters and checks if all parameters are correct.
+        
+        Parameters
+        ----------
+        borehole_parameters: numpy.ndarray
+            An array of borehole parameters.
+        
+        borehole_geometry_type: str, optional
+            A string that specifies type of borehole geometry. Available options: "diameter" and "radius".
+            By default set to "diameter". 
+            
+        borehole_units: list, optional
+            Two element list that specifies units of borehole model diameters (depths and diameters or radii).
+            Example: ["M", "MM"] 
+            
+        Returns
+        -------
+        formation_parameters: numpy.ndarray
+            An array of formation parameters with dimentions converted to meters.
+        """
         if np.shape(borehole_parameters)[0]<2:
             raise ValueError('Borehole paramaters have to be defined for at least two depths')
             
@@ -383,20 +520,21 @@ class Model():
 
         Parameters
         ----------
-        dip: float, optional
-            A value between 0 and 90. Describes dip of the layers in relation to the borehole axis.
-            By default set to 0.
+        dip: float
+            A value between 0 and 90. Describes dip of the layers in degrees in relation to the borehole axis.
             
         Returns
         -------
-        dip: float, optional
-            A value between 0 and 90. Describes dip of the layers in relation to the borehole axis.
-            By default set to 0.
+        dip: 
+            A value between 0 and 90. Describes dip of the layers in degrees in relation to the borehole axis.
+        dip_rad: 
+            A value between of dip converted to radians.
         """
         if dip<0 or dip>=90:
             raise ValueError("Uncorrect dip angle")
         else:
-            return dip, dip*np.pi/180
+            dip_rad = dip*np.pi/180
+            return dip, dip_rad
     
 
     def _check_model_geometry(self):
@@ -417,12 +555,12 @@ class Model():
         
         Parameters
         ----------
-        cpu_processes: int, optional
+        cpu_workers: int, optional
             Specify a number of processes that will solve the equations on cpu minus one reserved for the main process. Minimal value that can be set is 1,
             however a minimal combined number of cpu and gpu processes is 2.
             By default set to 4.
-
-        gpu_processes: int, optional
+            
+        gpu_workers: int, optional
             Specify a number of processes that will solve the equations on gpu. Minimal value that can be set is 0,
             however a minimal combined number of cpu and gpu processes is 2. 
             By default set to 0.
@@ -462,7 +600,9 @@ class Model():
     
             
     def _prepare_simulation_depths_and_tasks(self, measurement_depths, batch_size):
-        
+        """
+        This function prepares simulation tasks that later are dispatch to workers.
+        """
         tools_simulation_depths = {}
         for tool in self.tools.keys():
             tools_simulation_depths[tool] = np.round(measurement_depths + self.tools[tool][1,3], decimals=4)
@@ -554,6 +694,11 @@ class Model():
     def _add_points_to_borehole(self, maximal_distance=0.15):
         """
         This function adds additional points if borehole geometry is too sparse for the purpose of avoiding errors during 3d meshing procedure.
+        
+        Parameters
+        ----------
+        maximal_distance: float, optional
+            Distance above which additional points will be interpolated within borehole geometry.
         """
         ## Add additional points if borehole geometry is too sparse
         interpolated_depths = self.borehole_model[0,0]
@@ -581,8 +726,8 @@ class Model():
         
         Parameters
         ----------
-        measurement_depths: array
-            A 1D numpy array of depths of simulated measurements.
+        measurement_depths: np.ndarray
+            A 1D array of depths of simulated measurements.
             Values have to be given in ascending order and corespond to depths of the model.
 
         domain_radius: float, optional
@@ -760,12 +905,12 @@ class Model():
         This function saves results of modelling to txt file and produces raw visualization of the model and computed syntetic logs that is saved in PNG format.
 
         Parameters
-        -------
+        ----------
         output_folder: str
             A path to the folder where results will be saved.
             By default set to None will only show raw visualization of the model and computed syntetic logs without saving them to txt files (works only in Jupyter Notebooks).
 
-        measurements_to_save: str or list
+        measurements_to_save: str or list, optional
             A list of measurements to save to txt files.
             By default set to "auto" will save all measurements.
 
@@ -810,15 +955,16 @@ class Model():
             Have to have the same structure as list pased in plot_layout parameter.
             By default set to "auto" will automaticly assign different colours to logs.
         """
-
+        
+        ### Create folder structure and save results to txt files
         if output_folder!=None:
-            ### Create output folder
+            ## Create output folder
             output_subfolder = os.path.join(output_folder, "Results_{}/".format(str(datetime.datetime.now().strftime("%Y_%m_%d__%H_%M_%S"))))
 
             if not os.path.exists(output_subfolder):
                 os.makedirs(output_subfolder)
 
-            ### Save data to txt files
+            ## Save data to txt files
             if measurements_to_save=="auto":
                 measurements_to_save = list(self.logs.keys())
 
@@ -845,7 +991,6 @@ class Model():
                 file_number += 1
 
         ### Formation model visualization
-
         ## Unpack parameters
         formation_parameters = self.formation_model
         borehole_parameters = self.borehole_model
