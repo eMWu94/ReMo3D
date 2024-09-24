@@ -1,3 +1,7 @@
+# 1.4.0
+ -
+ - Corrections within docstrings. 
+
 # 1.3.0
  - Conversion of the main part of the code to classes.
  - Spliting initialization, log computation and shutdown of workers into separate functions (done with the intention to better adapt the code to the purpuse of use within inversion algorithms where simulations are performed multiple times within a procedure).

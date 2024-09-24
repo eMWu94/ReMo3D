@@ -53,7 +53,7 @@ class Model():
         self.dip_rad = None
         
         # Initialize modelling procedure atributes
-        self.gpu_workers = None
+        self.cpu_workers = None
         self.gpu_workers = None
         self.comm = None
         
@@ -127,14 +127,12 @@ class Model():
             By default set to 0.
             
         cpu_workers: int, optional
-            Specify a number of processes that will solve the equations on cpu minus one reserved for the main process. Minimal value that can be set is 1,
-            however a minimal combined number of cpu and gpu processes is 2.
-            By default set to 4.
+            Specify a number of processes that will solve the equations on cpu.
+            Minimal value that can be set is 1. By default set to 4.
             
         gpu_workers: int, optional
-            Specify a number of processes that will solve the equations on gpu. Minimal value that can be set is 0,
-            however a minimal combined number of cpu and gpu processes is 2. 
-            By default set to 0.            
+            Specify a number of processes that will solve the equations on gpu.
+            Minimal value that can be set is 0. By default set to 4.       
             
         domain_radius: float, optional
             A radius of simulation domain in meters.
@@ -556,14 +554,12 @@ class Model():
         Parameters
         ----------
         cpu_workers: int, optional
-            Specify a number of processes that will solve the equations on cpu minus one reserved for the main process. Minimal value that can be set is 1,
-            however a minimal combined number of cpu and gpu processes is 2.
-            By default set to 4.
+            Specify a number of processes that will solve the equations on cpu.
+            Minimal value that can be set is 1. By default set to 4.
             
         gpu_workers: int, optional
-            Specify a number of processes that will solve the equations on gpu. Minimal value that can be set is 0,
-            however a minimal combined number of cpu and gpu processes is 2. 
-            By default set to 0.
+            Specify a number of processes that will solve the equations on gpu.
+            Minimal value that can be set is 0. By default set to 4.   
         """  
         ## Check GPU availability
         if gpu_workers > 0:
