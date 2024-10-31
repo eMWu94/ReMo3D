@@ -53,7 +53,7 @@ for lvl_1_msg in iter(lambda: comm.sendrecv(None, dest=0), StopIteration):
     preconditioner = str()
     condense = bool()
     task_list = list()
-
+    
     # Fill variables with data
     comm.Bcast([formation_parameters, MPI.FLOAT], root=0)
     comm.Bcast([borehole_geometry, MPI.FLOAT], root=0)
@@ -82,22 +82,15 @@ for lvl_1_msg in iter(lambda: comm.sendrecv(None, dest=0), StopIteration):
         if mesh_generator=="gmsh":
             # Carve out suitable range of data
             local_formation_geometry, local_borehole_geometry, sigma = gmf.SelectGmshDataRange(borehole_geometry, formation_parameters, dip, mud_resistivities[depth_index], simulation_depths[depth_index], domain_radius)
-            # Create geometry and mesh
-            if dip==0:
-                mesh = gmf.ConstructGmsh2dModel(domain_radius, tool_geometry, source_terms, local_formation_geometry, local_borehole_geometry, rank, mesh_generator)
-            else:
-                mesh = gmf.ConstructGmsh3dModel(domain_radius, tool_geometry, source_terms, local_formation_geometry, dip, local_borehole_geometry, rank)
             dirichlet_boundary = 'dirichlet_boundary'
         # Generate mesh using netgen
         elif mesh_generator=="netgen":
             # Carve out suitable range of data
             local_formation_geometry, local_borehole_geometry, sigma = ngf.SelectNetgenDataRange(borehole_geometry, formation_parameters, mud_resistivities[depth_index], simulation_depths[depth_index], domain_radius)
-            # Create geometry and mesh
-            mesh = ngf.ConstructNetgen2dModel(domain_radius, tool_geometry, source_terms, local_formation_geometry, local_borehole_geometry)
             dirichlet_boundary = [2]
 
         # Convert data to ngsolve format
-        mesh = ngs.Mesh(mesh)
+        mesh = ngs.Mesh("./meshfiles" +"/fm_"+str(depth_index)+".vol.gz")
         sigma = ngs.CoefficientFunction(sigma)
 
         ## Compute measured resistivity

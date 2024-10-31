@@ -10,7 +10,7 @@ import sys
 import os
 
 # Add the parent directory of both subdirectories to sys.path
-sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'remo3d_test_1'))
+sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'remo3d'))
 
 from remo3d import Model
 import numpy as np

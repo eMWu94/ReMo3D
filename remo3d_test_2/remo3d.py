@@ -59,7 +59,7 @@ class Model():
         self.comm = None
         
         # Initialize results atributes
-        self.meshes = None
+        #self.meshes = None
         self.logs = None
 
     
@@ -600,7 +600,7 @@ class Model():
             
     def _prepare_simulation_depths_and_tasks(self, measurement_depths, batch_size):
         """
-        This function prepares simulation tasks that later are dispatched to workers.
+        This function prepares simulation tasks that later are dispatch to workers.
         """
         tools_simulation_depths = {}
         for tool in self.tools.keys():
@@ -1226,9 +1226,6 @@ class Model():
   
         ## Send and wait for all workers to receive data
         self.comm.bcast(solve_on, root=MPI.ROOT)
-        self.comm.barrier()
-        
-        self.comm.bcast(self.meshes, root=MPI.ROOT)
         self.comm.barrier()   
         
         
@@ -1287,9 +1284,13 @@ class Model():
         if ~np.isclose(self.dip_deg, 0) and mesh_generator!="gmsh":
             raise ValueError("The only mesh generator supported in 3D models is gmsh")
 
-        # Create temporary directory for mesh files
+        # Create temporary directory for gmsh mesh files
         if mesh_generator=="gmsh" and not os.path.exists("./tmp"):
             os.makedirs("./tmp")
+
+        # Create temporary directory for netgen mesh files
+        if not os.path.exists("./meshfiles"):
+            os.makedirs("./meshfiles")
 
         # Create dense borehole geometry for the purpose of 3D mesh generation (necessary to avoid errors during meshing procedure)
         if self.dip_deg!=0:
@@ -1362,13 +1363,7 @@ class Model():
                 self.comm.send(obj=msg, dest=status.Get_source())
         
         self.comm.barrier()
-        
-        # Gather results from workers
-        list_of_results = [item for sublist in self.comm.gather(None, root=MPI.ROOT) for item in sublist]
 
-        ## Format and sort results
-        meshes = [sublist[1] for sublist in sorted(list_of_results, key=lambda x: x[0])]
-        
         ### Remove tmp folder and mesh files
         if mesh_generator=="gmsh":
             shutil.rmtree("./tmp")
@@ -1376,10 +1371,7 @@ class Model():
         ### Report time of computation
         print('\nProcessed in: ', datetime.datetime.now() - start_time)
 
-        # Save logs
-        self.meshes = meshes
         
-
     def create_logs(self, measurement_depths, domain_radius=50, batch_size=5, mesh_generator="auto", preconditioner="multigrid", condense=True):
         """
         This function prepares data, dispatches tasks to workers, gathers and assembles generated synthetic logs.

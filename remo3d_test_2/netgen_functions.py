@@ -119,7 +119,7 @@ def SelectNetgenDataRange(borehole_geometry, formation_parameters, mud_resistivi
 
 def ConstructNetgen2dModel(domain_radius, tool_geometry, source_terms, formation_geometry, borehole_geometry, file_number=None, output_folder_path="./meshfiles", output_mode="variable"):
 
-    mesh_size_min = 0.1
+    mesh_size_min = 0.001
     mesh_size_max = 10
     mesh_density = "moderate"
 
@@ -317,7 +317,7 @@ def ConstructNetgen2dModel(domain_radius, tool_geometry, source_terms, formation
     ### Add mesh size information
     for k in np.ndarray.flatten(np.argwhere(source_terms != 0))+1: # Set minimum mesh size around source points
         points[k].append(mesh_size_min)
-        
+
     ### Create the model geometry
     model_geometry = SplineGeometry()
 
@@ -330,6 +330,6 @@ def ConstructNetgen2dModel(domain_radius, tool_geometry, source_terms, formation
 
     # Save or return mesh
     if output_mode == "file":
-        mesh.Save(output_folder_path + "/fm_"+str(file_number)+".msh")
+        mesh.Save(output_folder_path + "/fm_"+str(file_number))
     elif output_mode == "variable":
         return mesh

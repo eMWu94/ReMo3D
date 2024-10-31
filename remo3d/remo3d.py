@@ -162,7 +162,7 @@ class Model():
         model = cls(tools, force_single_electrode_configuration=force_single_electrode_configuration)
 
         model.set_model_parameters(formation_model, borehole_model, borehole_geometry_type=borehole_geometry_type, dip=dip)
-
+        
         model.initialize_workers(cpu_workers=cpu_workers, gpu_workers=gpu_workers)
 
         model.simulate_logs(measurement_depths, domain_radius=domain_radius, batch_size=batch_size, mesh_generator=mesh_generator, preconditioner=preconditioner, condense=condense)

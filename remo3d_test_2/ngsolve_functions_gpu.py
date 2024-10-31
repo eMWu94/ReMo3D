@@ -2,25 +2,17 @@
 
 import numpy as np
 import ngsolve as ngs
+    
+ngs.ngsglobals.msg_level=0
 
-#ngs.ngsglobals.msg_level=0
+from ngsolve_functions import AddPointSource
 
-# Ngsolve funtions
+from ngsolve.ngscuda import *
 
-def AddPointSource(f, position, fac, model_dimensionality):
-        spc = f.space
-        if model_dimensionality==2:
-            mp = spc.mesh(0,position)
-        elif model_dimensionality==3:
-            mp = spc.mesh(0,0,position)
-        ei = ngs.ElementId(ngs.VOL, mp.nr)
-        fel = spc.GetFE(ei)
-        dnums = spc.GetDofNrs(ei)
-        shape = fel.CalcShape(*mp.pnt)
-        for d,s in zip(dnums, shape):
-            f.vec[d] += fac*s
 
-def SolveBVP(mesh, sigma, tool_geometry, source_terms, dirichlet_boundary, preconditioner, condense):
+# Ngsolve gpu funtions
+
+def SolveBVP(mesh, sigma, tool_geometry, source_terms, dirichlet_boundary, preconditioner, condense, solve_on="CPU"):
 
     model_dimensionality = mesh.dim
 
@@ -35,7 +27,6 @@ def SolveBVP(mesh, sigma, tool_geometry, source_terms, dirichlet_boundary, preco
     elif model_dimensionality==3:
         a += ngs.grad(u)*ngs.grad(v)*sigma*ngs.dx
 
-    #start_time = datetime.datetime.now()  
     f = ngs.LinearForm(fes)
     f.Assemble()
 
@@ -43,17 +34,18 @@ def SolveBVP(mesh, sigma, tool_geometry, source_terms, dirichlet_boundary, preco
         if source_terms[l] != 0.0:
             AddPointSource(f, tool_geometry[l], source_terms[l], model_dimensionality)
 
-    
-
-    
     c = ngs.Preconditioner(a, preconditioner)
     a.Assemble()
     gfu = ngs.GridFunction(fes)
-    #gfu.Set(1/((1/100)*4*np.pi*25), ngs.BND)
 
-    inv = ngs.CGSolver(a.mat, c.mat, maxsteps=1000)
-    gfu.vec.data = inv * f.vec
+    adev = a.mat.CreateDeviceMatrix()
+    cdev = c.mat.CreateDeviceMatrix()
+    fdev = f.vec.CreateDeviceVector(copy=True)
 
+    inv = ngs.CGSolver(adev, cdev, maxsteps=1000, printrates=False)
+
+    gfu.vec.data = inv * fdev
+        
     if condense==True:
         f.vec.data += a.harmonic_extension_trans * f.vec
         gfu.vec.data += a.harmonic_extension * gfu.vec

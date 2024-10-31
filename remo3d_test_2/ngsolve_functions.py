@@ -43,14 +43,10 @@ def SolveBVP(mesh, sigma, tool_geometry, source_terms, dirichlet_boundary, preco
         if source_terms[l] != 0.0:
             AddPointSource(f, tool_geometry[l], source_terms[l], model_dimensionality)
 
-    
-
-    
     c = ngs.Preconditioner(a, preconditioner)
     a.Assemble()
     gfu = ngs.GridFunction(fes)
-    #gfu.Set(1/((1/100)*4*np.pi*25), ngs.BND)
-
+    
     inv = ngs.CGSolver(a.mat, c.mat, maxsteps=1000)
     gfu.vec.data = inv * f.vec
 
