@@ -12,12 +12,12 @@ After all prerequisites are succesufully installed run one of the following comm
 
 Linux:
 ```
-pip3 install git+https://github.com/eMWu94/ReMo3D.git#egg=remo3d
+pip3 install git+https://github.com/eMWu94/ReMo3D.git
 ```
 
 Windows:
 ```
-pip install git+https://github.com/eMWu94/ReMo3D.git#egg=remo3d
+pip install git+https://github.com/eMWu94/ReMo3D.git
 ```
 
 The package was tested on Ubuntu 18.04, Ubuntu 20.04, Windows 10 Pro and Windows 11 Pro.
