@@ -264,7 +264,7 @@ class Model():
                 raise ValueError("{} logging tool specification is uncorrect".format(tool))
             # Calculate electrodes positions in relation to measurment point position set to 0
             positons = np.array([0, 0+distances[0], 0+distances[0]+distances[1]]) # electrodes positions in relation to the top electrode positon set to 0
-            z_a, z_b, z_m, z_n = np.NaN, np.NaN, np.NaN, np.NaN
+            z_a, z_b, z_m, z_n = np.nan, np.nan, np.nan, np.nan
             for i in range(3):
                 if electrodes[i]=='A':
                     z_a = positons[i] - z_mp
