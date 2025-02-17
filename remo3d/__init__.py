@@ -10,4 +10,6 @@ __author__ = "Michał Wilkosz"
 __email__ = "michal.m.wilkosz@gmail.com"
 __version__ = "1.1.0"
 
-__all__ = ["remo3d"]
+from .remo3d import Model  # Import Model from remo3d.py (if it's defined there)
+
+__all__ = ["Model"]
