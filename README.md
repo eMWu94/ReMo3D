@@ -25,5 +25,9 @@ The package was tested on Ubuntu 18.04, Ubuntu 20.04, Windows 10 Pro and Windows
 ## Expected computation times
 On a default settings simulation of 100 measurement points of a single logging tool on a PC equipped with AMD Ryzen 2600 CPU takes around 15-30 seconds in case of a 2D model of moderate complexity and around 15-30 minutes in case of a 3D model of moderate complexity.
 
+## Licensing Information
+The code in this repository is licensed under the GNU General Public License (GPL) v2.1. 
+The accompanying data (including but not limited to benchmark models, datasets, and other supporting materials) in this repository is licensed under the Creative Commons Attribution 4.0 International License (CC BY 4.0).
+
 ## Funding
-The  research  was  funded  by  the  National  Sci-ence  Centre,  Poland,  grant  number  2020/37/N/ST10/03230.
+The  research  was  funded  by  the  National  Science  Centre,  Poland,  grant  number  2020/37/N/ST10/03230.
